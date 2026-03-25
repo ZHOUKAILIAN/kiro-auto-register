@@ -7,6 +7,8 @@
 
 ## 📦 项目结构
 
+**本地路径**: `/Users/zhoukailian/mySelf/kiro-auto-register`
+
 ```
 kiro-auto-register/
 ├── src/
@@ -107,6 +109,7 @@ npm run dev
 - ✅ 实现 Kiro 自动注册核心逻辑
 - ✅ 实现 claude-api 导出功能
 - ✅ 编写完整文档
+- ✅ 移动到 mySelf 文件夹
 
 ## 🎯 下一步计划
 
