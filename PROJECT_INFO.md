@@ -7,7 +7,7 @@
 
 ## 📦 项目结构
 
-**本地路径**: `/Users/zhoukailian/mySelf/kiro-auto-register`
+**本地路径**: `~/Desktop/mySelf/kiro-auto-register`
 
 ```
 kiro-auto-register/
