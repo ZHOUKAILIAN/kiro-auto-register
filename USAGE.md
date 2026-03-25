@@ -1,190 +1,117 @@
 # 使用指南
 
-## 📝 快速开始
-
-### 1. 克隆仓库
+## 1. 启动应用
 
 ```bash
-git clone https://github.com/ZHOUKAILIAN/kiro-auto-register.git
-cd kiro-auto-register
-```
-
-### 2. 安装依赖
-
-```bash
-npm install
-npm run install-browser
-```
-
-### 3. 配置环境变量（可选）
-
-```bash
-cp .env.example .env
-# 编辑 .env 文件，配置代理等
-```
-
-### 4. 运行注册
-
-```bash
+npm install --legacy-peer-deps
 npm run dev
 ```
 
-## 🎯 核心功能说明
+## 2. 配置控制台
 
-### 自动注册流程
+应用顶部的控制台支持以下配置：
 
-1. **创建临时邮箱** - 使用 Tempmail.lol API 自动创建
-2. **访问 AWS 注册页面** - Playwright 自动化浏览器
-3. **填写注册信息** - 自动生成随机姓名
-4. **获取验证码** - 自动从临时邮箱读取
-5. **完成注册** - 获取 SSO Token
+- 注册数量：一次顺序执行多少个注册任务
+- 代理 URL：需要翻墙时填写
+- claude-api 地址：例如 `http://127.0.0.1:62311`
+- claude-api 管理口令：默认通常是 `admin`
+- cliproxyapi auth 目录：选择 `~/.cli-proxy-api` 或挂载目录
+- 自动导入开关：
+  - 注册成功后自动导入 claude-api
+  - 注册成功后自动写入 cliproxy auth 文件
 
-### 导出到 claude-api
+## 3. 开始注册
 
-注册成功后，可以通过以下方式导出:
+点击“开始注册”后，系统会：
 
-#### 方式一: JSON 文件导出
+1. 创建临时邮箱
+2. 走 AWS / Builder ID 的纯接口注册链路
+3. 读取 `x-amz-sso_authn`
+4. 通过 AWS OIDC / SSO portal 兑换 `accessToken / refreshToken / clientId / clientSecret`
+5. 拉取用户邮箱、订阅和基础用量
+6. 保存到本地账号池
 
-```typescript
-import { exportToFile } from './src/services/exporter';
+右侧日志面板会实时显示每个阶段的输出。
 
-// 导出所有账号
-exportToFile(accounts, 'kiro-accounts.json');
+补充说明：
+
+- 当前临时邮箱优先使用 `Tempmail.lol`
+- 验证码轮询已加入 OTP 时间锚点过滤，避免历史邮件干扰本次注册
+- 当前环境如果直接创建 `tempmail.lol` 邮箱失败，可通过 `TEMPMAIL_REUSE_EMAIL` / `TEMPMAIL_REUSE_TOKEN` 复用已有邮箱
+- 当前中国大陆出口环境实测在 AWS `profile /send-otp` 阶段可能被 TES 风控拦截，建议优先配置可用代理
+
+## 4. 导入到 claude-api
+
+配置好地址和口令后：
+
+- 不选账号：导入全部本地账号
+- 勾选账号：只导入勾选项
+
+点击“导入 claude-api”后，应用会调用：
+
+```bash
+POST /v2/accounts/import-by-token
+Authorization: Bearer <admin-password>
 ```
 
-#### 方式二: 直接复制 JSON
+如果目标版本不支持该接口，应用会自动回退到：
+
+```bash
+POST /v2/accounts/import
+Authorization: Bearer <admin-password>
+```
+
+## 5. 验证 claude-api 请求
+
+点击“验证 claude-api”后，应用会调用：
+
+```bash
+POST /v2/test/chat/completions
+Authorization: Bearer <admin-password>
+```
+
+如果本地账号池为空，典型返回是：
 
 ```json
-[
-  {
-    "refreshToken": "xxx",
-    "provider": "BuilderId",
-    "email": "xxx@tempmail.lol",
-    "name": "John Smith"
-  }
-]
+{"error":"无可用账号，请先添加并配置账号"}
 ```
 
-## 🔧 高级配置
+## 6. 同步到 cliproxyapi
 
-### 使用代理
+配置好 auth 目录后：
 
-在 `.env` 文件中配置:
+- 不选账号：同步全部本地账号
+- 勾选账号：只同步勾选项
 
-```env
-PROXY_URL=http://127.0.0.1:7890
+点击“同步 cliproxyapi”后，应用会为每个账号写入一个 `kiro-*.json` 文件。
+
+## 7. 导出 JSON
+
+点击“导出 JSON”会下载当前账号的 claude-api 导入 payload，适合手工备份或跨机器迁移。
+
+## 8. 删除账号
+
+- “删除选中”会批量删除勾选账号
+- 表格最后一列支持删除单个账号
+
+## 常见问题
+
+### 安装时报 peer 依赖冲突
+
+使用：
+
+```bash
+npm install --legacy-peer-deps
 ```
 
-或在代码中传入:
+### 注册成功但凭证未补全
 
-```typescript
-await autoRegister(onProgress, 'http://127.0.0.1:7890');
-```
+说明纯接口注册已部分成功，但 AWS / Kiro 凭证兑换阶段失败。账号仍会保存在本地，但不会处于“可导入”状态，建议根据日志重试。
 
-### 批量注册
+### 同步 cliproxyapi 失败
 
-```typescript
-const results = [];
-for (let i = 0; i < 5; i++) {
-  const result = await autoRegister((msg) => {
-    console.log(`[任务${i+1}] ${msg}`);
-  });
-  if (result.success) {
-    results.push(result);
-  }
-  await new Promise(r => setTimeout(r, 5000)); // 间隔5秒
-}
-```
+优先检查：
 
-### 自定义密码
-
-修改 `src/services/kiroRegister.ts` 中的 `DEFAULT_PASSWORD`:
-
-```typescript
-const DEFAULT_PASSWORD = 'YourCustomPassword123!';
-```
-
-## 📤 导入到 claude-api
-
-### 步骤
-
-1. 确保 claude-api 服务正在运行:
-   ```bash
-   cd ../claude-api
-   ./claude-server
-   ```
-
-2. 访问 http://localhost:62311
-
-3. 登录（密码: admin）
-
-4. 进入"账号管理" -> "批量添加"
-
-5. 粘贴导出的 JSON 数据:
-   ```json
-   [
-     {
-       "refreshToken": "xxx",
-       "provider": "BuilderId",
-       "email": "xxx@tempmail.lol"
-     }
-   ]
-   ```
-
-6. 点击"导入"
-
-### 验证导入
-
-导入后，在账号列表中应该能看到新账号:
-- 邮箱地址
-- 认证方式: BuilderId
-- 状态: 可用
-
-## ⚠️ 注意事项
-
-### Tempmail.lol 限制
-
-- 中国大陆 IP 可能被限制，需要使用代理
-- 邮箱有效期约 10-15 分钟
-- 建议注册完成后立即导入到 claude-api
-
-### 注册成功率
-
-- 单次注册成功率约 80-90%
-- 主要失败原因：
-  - 验证码未收到（邮箱过期）
-  - AWS 服务器错误
-  - 网络超时
-
-### 安全建议
-
-- 不要在公共网络使用
-- 定期更换代理
-- 避免短时间大量注册
-
-## 🐛 常见问题
-
-### Q: Tempmail.lol 返回 403
-
-A: 使用代理访问，或订阅 TempMail Plus/Ultra
-
-### Q: 验证码一直收不到
-
-A:
-1. 检查邮箱是否过期
-2. 延长超时时间
-3. 重新创建邮箱重试
-
-### Q: 导入到 claude-api 失败
-
-A:
-1. 检查 JSON 格式是否正确
-2. 确保 refreshToken 字段存在
-3. 检查 claude-api 服务状态
-
-### Q: 浏览器一直卡住
-
-A:
-1. 关闭无头模式方便调试
-2. 检查网络连接
-3. 增加超时时间
+- auth 目录是否存在
+- 是否有写权限
+- 账号是否已经补全 `accessToken` 和 `refreshToken`

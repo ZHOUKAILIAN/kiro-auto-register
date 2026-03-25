@@ -118,9 +118,9 @@ graph TD
 
 ## 📚 Key Project Information
 
-- **Tech Stack**: Electron + TypeScript + Playwright + React
+- **Tech Stack**: Electron + TypeScript + React + pure HTTP service orchestration
 - **Main Purpose**: Automated AWS Kiro account registration
-- **Key Services**: Tempmail.lol integration, Browser automation
+- **Key Services**: Tempmail.lol integration, API-based registration, credential exchange, claude-api import
 - **Export Format**: claude-api compatible JSON
 
 See `docs/analysis/project-analysis.md` for detailed project structure and patterns.

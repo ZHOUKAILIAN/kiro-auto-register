@@ -6,16 +6,10 @@
 
 ```bash
 cd ~/Desktop/mySelf/kiro-auto-register
-npm install
+npm install --legacy-peer-deps
 ```
 
-### 2. 安装 Playwright 浏览器
-
-```bash
-npm run install-browser
-```
-
-### 3. 启动应用
+### 2. 启动应用
 
 ```bash
 npm run dev
@@ -56,11 +50,10 @@ kiro-auto-register/
 
 ### 注册流程
 1. 自动创建临时邮箱 (Tempmail.lol)
-2. 访问 AWS Kiro 注册页面
-3. 填写注册信息（自动生成姓名）
-4. 自动获取邮箱验证码
-5. 完成注册并获取 SSO Token
-6. 保存账号信息到本地数据库
+2. 调用 AWS Kiro / Builder ID 相关 API
+3. 自动获取邮箱验证码
+4. 完成注册并获取 SSO Token
+5. 保存账号信息到本地数据库
 
 ### 账号管理
 - **查看**: 显示所有账号详情
@@ -119,9 +112,6 @@ npm run build
 
 # 预览构建结果
 npm start
-
-# 安装 Playwright 浏览器
-npm run install-browser
 ```
 
 ## 🐛 常见问题
@@ -135,21 +125,15 @@ node --version  # 检查版本
 ### Q2: Tempmail.lol 返回错误
 **A**: 配置代理或使用 VPN
 
-### Q3: Playwright 浏览器下载失败
-**A**: 手动安装
-```bash
-npx playwright install chromium
-```
-
-### Q4: 界面无法加载
+### Q3: 界面无法加载
 **A**: 清除缓存重启
 ```bash
 rm -rf node_modules
-npm install
+npm install --legacy-peer-deps
 npm run dev
 ```
 
-### Q5: 注册一直卡住
+### Q4: 注册一直卡住
 **A**: 检查网络连接和代理设置
 
 ## 📊 技术栈
@@ -157,7 +141,7 @@ npm run dev
 - **Electron**: 38.x（桌面应用框架）
 - **React**: 18.x（前端 UI）
 - **TypeScript**: 5.x（类型安全）
-- **Playwright**: 1.x（浏览器自动化）
+- **Undici / fetch**: HTTP 请求与代理支持
 - **Vite**: 6.x（构建工具）
 - **electron-store**: 11.x（数据持久化）
 

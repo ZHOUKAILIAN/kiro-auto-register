@@ -1,20 +1,33 @@
 /// <reference types="vite/client" />
 
+import type {
+  AppSettings,
+  BatchRegisterResult,
+  ClaudeChatProbeResult,
+  ClaudeImportResult,
+  CliproxyWriteResult,
+  RegisterOptions,
+  StoredAccount
+} from '../../shared/contracts.ts';
+
 declare global {
   interface Window {
-    electron: any;
+    electron: unknown;
     api: {
-      getAccounts: () => Promise<any[]>;
-      saveAccount: (account: any) => Promise<any[]>;
-      deleteAccount: (id: number) => Promise<any[]>;
-      deleteAccounts: (ids: number[]) => Promise<any[]>;
-      startRegister: (proxyUrl?: string) => Promise<any>;
+      getAccounts: () => Promise<StoredAccount[]>;
+      saveAccount: (account: StoredAccount) => Promise<StoredAccount[]>;
+      deleteAccount: (id: number) => Promise<StoredAccount[]>;
+      deleteAccounts: (ids: number[]) => Promise<StoredAccount[]>;
+      startRegister: (options: Partial<RegisterOptions>) => Promise<BatchRegisterResult>;
       onRegisterProgress: (callback: (message: string) => void) => void;
       removeRegisterProgressListener: () => void;
-      exportAccounts: (accounts: any[]) => Promise<string>;
-      toClaudeApiFormat: (account: any) => Promise<any>;
-      getSettings: () => Promise<any>;
-      saveSettings: (settings: any) => Promise<any>;
+      exportAccounts: (accountIds?: number[]) => Promise<string>;
+      importToClaudeApi: (accountIds?: number[]) => Promise<ClaudeImportResult>;
+      probeClaudeApiChat: () => Promise<ClaudeChatProbeResult>;
+      writeCliproxyAuthFiles: (accountIds?: number[]) => Promise<CliproxyWriteResult>;
+      selectCliproxyAuthDir: () => Promise<{ canceled: boolean; path?: string }>;
+      getSettings: () => Promise<AppSettings>;
+      saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
     };
   }
 }

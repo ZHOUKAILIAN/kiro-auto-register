@@ -34,7 +34,7 @@ kiro-auto-register/
 - 智能邮件过滤和验证码提取
 
 ### 2. Kiro 自动注册 ✅
-- Playwright 浏览器自动化
+- 纯 HTTP / API 注册编排
 - 完整注册流程自动化
 - 随机姓名生成
 - 支持代理配置
@@ -59,7 +59,6 @@ cd kiro-auto-register
 
 ```bash
 npm install
-npm run install-browser
 ```
 
 ### 运行
@@ -93,7 +92,7 @@ npm run dev
 
 ### Kiro-auto-register (参考项目)
 - **路径**: `/Users/zhoukailian/Kiro-auto-register`
-- **技术**: Electron + Playwright
+- **技术**: Electron + API workflow
 - **功能**: Outlook 邮箱 + OIDC 认证
 
 ### codex-manager (参考项目)
@@ -136,10 +135,10 @@ npm run dev
 - 邮件去重机制
 - OTP 时间锚点过滤
 
-### Playwright 自动化
-- 浏览器指纹隐藏
-- 动态元素等待
-- Cookie 管理
+### API 注册链路
+- 指纹脚本仿真
+- HTTP Cookie 管理
+- OTP 邮件轮询
 - 代理支持
 
 ### 导出格式兼容

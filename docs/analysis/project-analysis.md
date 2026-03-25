@@ -19,16 +19,16 @@ Automated AWS Kiro (Amazon Q Developer) account registration tool with integrati
 | **UI Framework** | React | (via @vitejs/plugin-react) |
 | **Build Tool** | electron-vite | ^2.3.0 |
 | **Bundler** | Vite | ^6.0.7 |
-| **Browser Automation** | Playwright | ^1.57.0 |
+| **HTTP Runtime** | undici + fetch | ^7.16.0 |
 | **Database** | SQLite (better-sqlite3) | ^11.0.0 |
 | **Storage** | electron-store | ^11.0.2 |
 
 ### Project Maturity
-- **Status**: Early development phase
-- **Core Services**: Implemented (tempmail, registration, export)
-- **UI**: Not yet implemented
-- **Database**: Schema not implemented
-- **Testing**: Not yet implemented
+- **Status**: Functional desktop workbench available
+- **Core Services**: Implemented (tempmail, registration, credential exchange, target integrations)
+- **UI**: Implemented with React-based control panel, logs, and account table
+- **Persistence**: `electron-store` based account/settings persistence implemented
+- **Testing**: Targeted service-level regression tests implemented
 
 ## 📁 Directory Structure
 
@@ -36,11 +36,15 @@ Automated AWS Kiro (Amazon Q Developer) account registration tool with integrati
 kiro-auto-register/
 ├── src/
 │   ├── main/              # Electron main process (TODO)
-│   ├── preload/           # Preload scripts (TODO)
-│   ├── renderer/          # React UI components (TODO)
+│   ├── preload/           # Typed preload bridge
+│   ├── renderer/          # React UI workbench
 │   └── services/          # Core business logic
 │       ├── tempmail.ts    # ✅ Tempmail.lol integration
 │       ├── kiroRegister.ts # ✅ AWS Kiro automation
+│       ├── kiroAuthExchange.ts # ✅ AWS OIDC + Kiro credential exchange
+│       ├── targetIntegrations.ts # ✅ claude-api import + cliproxy file sync
+│       ├── accountFormats.ts # ✅ target payload/file formatters
+│       ├── storeSchemas.ts # ✅ local store normalization
 │       └── exporter.ts    # ✅ claude-api export
 ├── docs/                  # Documentation (NEW)
 │   ├── requirements/      # Feature requirements
@@ -100,14 +104,15 @@ interface Message {
 **Responsibility**: Automated AWS Kiro account registration
 
 **Key Features**:
-- Playwright browser automation
+- Pure HTTP registration orchestration
 - Random name generation
 - Email verification flow
-- Password setup
+- Fingerprint and browserData generation
 - SSO token extraction
 
 **Dependencies**:
-- Playwright (Chromium)
+- fetch / undici
+- jsdom-based fingerprint runtime
 - Tempmail service
 - Proxy support (optional)
 
@@ -127,20 +132,12 @@ interface RegisterResult {
 
 **Registration Flow**:
 1. Create temporary email via tempmail
-2. Launch Chromium browser
-3. Navigate to AWS registration page
-4. Fill email address
-5. Enter random generated name
-6. Wait for and enter verification code
-7. Set password
-8. Extract SSO token from cookies
-9. Return registration result
-
-**Browser Configuration**:
-- Headless: false (visible browser)
-- Proxy: Optional via environment variable
-- User agent spoofing
-- Automation detection bypass
+2. Start AWS signin / profile workflows via HTTP APIs
+3. Build fingerprint and browserData payloads
+4. Trigger email verification
+5. Poll and submit OTP
+6. Extract SSO token from cookies
+7. Return registration result
 
 ### 3. Export Service (`exporter.ts`)
 
@@ -161,6 +158,25 @@ interface ClaudeApiAccount {
 - Batch export support
 - JSON file generation
 - claude-api compatible format
+
+### 4. Credential Exchange Service (`kiroAuthExchange.ts`)
+
+**Responsibility**: Exchange `x-amz-sso_authn` into reusable BuilderId / Kiro credentials.
+
+**Key Features**:
+- Register OIDC client dynamically
+- Request device authorization and accept user code via AWS SSO portal
+- Poll token endpoint until access/refresh tokens are available
+- Query Kiro RPC endpoints for user and usage metadata
+
+### 5. Target Integration Service (`targetIntegrations.ts`)
+
+**Responsibility**: Deliver registered accounts into downstream systems.
+
+**Key Features**:
+- `claude-api` direct import through `/v2/accounts/import-by-token`
+- `cliproxyapi` Kiro auth file generation and directory writes
+- Structured failure results for network and filesystem errors
 
 ## 🎨 Code Conventions
 
@@ -265,7 +281,8 @@ ipcRenderer.on('register:progress', (event, msg) => {
 
 | Package | Purpose | Usage |
 |---------|---------|-------|
-| `playwright` | Browser automation | Core registration flow |
+| `undici` | HTTP transport + proxy support | Core registration flow |
+| `jsdom` | Fingerprint runtime sandbox | Core registration flow |
 | `better-sqlite3` | Local database | Account storage (planned) |
 | `electron-store` | Config storage | Settings persistence (planned) |
 | `@electron-toolkit/*` | Electron utilities | IPC helpers (planned) |
@@ -284,7 +301,7 @@ ipcRenderer.on('register:progress', (event, msg) => {
 ### Missing Dependencies (Recommended)
 
 - `@types/node` - Already included ✅
-- Testing framework (e.g., `vitest`, `playwright/test`)
+- Testing framework (e.g., `vitest`)
 - Linting tools (e.g., `eslint`, `prettier`)
 - Logger (e.g., `winston`, `pino`)
 
@@ -491,14 +508,14 @@ renderer/
 
 ### Key Technologies
 - [Electron Documentation](https://www.electronjs.org/docs)
-- [Playwright Documentation](https://playwright.dev/)
+- [Undici Documentation](https://undici.nodejs.org/)
 - [TypeScript Handbook](https://www.typescriptlang.org/docs/)
 - [React Documentation](https://react.dev/)
 
 ### Best Practices
 - [Electron Security](https://www.electronjs.org/docs/tutorial/security)
 - [TypeScript Best Practices](https://www.typescriptlang.org/docs/handbook/declaration-files/do-s-and-don-ts.html)
-- [Playwright Best Practices](https://playwright.dev/docs/best-practices)
+- [MDN Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)
 
 ---
 

@@ -5,33 +5,51 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { electronAPI } from '@electron-toolkit/preload';
 
-// 自定义 API
-const api = {
-  // 账号管理
-  getAccounts: () => ipcRenderer.invoke('get-accounts'),
-  saveAccount: (account: any) => ipcRenderer.invoke('save-account', account),
-  deleteAccount: (id: number) => ipcRenderer.invoke('delete-account', id),
-  deleteAccounts: (ids: number[]) => ipcRenderer.invoke('delete-accounts', ids),
+import type {
+  AppSettings,
+  BatchRegisterResult,
+  ClaudeChatProbeResult,
+  ClaudeImportResult,
+  CliproxyWriteResult,
+  RegisterOptions,
+  StoredAccount
+} from '../shared/contracts.ts';
 
-  // 注册功能
-  startRegister: (proxyUrl?: string) => ipcRenderer.invoke('start-register', proxyUrl),
-  onRegisterProgress: (callback: (message: string) => void) => {
-    ipcRenderer.on('register-progress', (_, message) => callback(message));
+interface DirectorySelectionResult {
+  canceled: boolean;
+  path?: string;
+}
+
+const api = {
+  getAccounts: (): Promise<StoredAccount[]> => ipcRenderer.invoke('get-accounts'),
+  saveAccount: (account: StoredAccount): Promise<StoredAccount[]> => ipcRenderer.invoke('save-account', account),
+  deleteAccount: (id: number): Promise<StoredAccount[]> => ipcRenderer.invoke('delete-account', id),
+  deleteAccounts: (ids: number[]): Promise<StoredAccount[]> => ipcRenderer.invoke('delete-accounts', ids),
+
+  startRegister: (options: Partial<RegisterOptions>): Promise<BatchRegisterResult> =>
+    ipcRenderer.invoke('start-register', options),
+  onRegisterProgress: (callback: (message: string) => void): void => {
+    ipcRenderer.on('register-progress', (_event, message: string) => callback(message));
   },
-  removeRegisterProgressListener: () => {
+  removeRegisterProgressListener: (): void => {
     ipcRenderer.removeAllListeners('register-progress');
   },
 
-  // 导出功能
-  exportAccounts: (accounts: any[]) => ipcRenderer.invoke('export-accounts', accounts),
-  toClaudeApiFormat: (account: any) => ipcRenderer.invoke('to-claude-api-format', account),
+  exportAccounts: (accountIds?: number[]): Promise<string> => ipcRenderer.invoke('export-accounts', accountIds),
+  importToClaudeApi: (accountIds?: number[]): Promise<ClaudeImportResult> =>
+    ipcRenderer.invoke('import-to-claude-api', accountIds),
+  probeClaudeApiChat: (): Promise<ClaudeChatProbeResult> =>
+    ipcRenderer.invoke('probe-claude-api-chat'),
+  writeCliproxyAuthFiles: (accountIds?: number[]): Promise<CliproxyWriteResult> =>
+    ipcRenderer.invoke('write-cliproxy-auth-files', accountIds),
+  selectCliproxyAuthDir: (): Promise<DirectorySelectionResult> =>
+    ipcRenderer.invoke('select-cliproxy-auth-dir'),
 
-  // 设置
-  getSettings: () => ipcRenderer.invoke('get-settings'),
-  saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings)
+  getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
+  saveSettings: (settings: Partial<AppSettings>): Promise<AppSettings> =>
+    ipcRenderer.invoke('save-settings', settings)
 };
 
-// 暴露到渲染进程
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI);
@@ -40,8 +58,10 @@ if (process.contextIsolated) {
     console.error(error);
   }
 } else {
-  // @ts-ignore
-  window.electron = electronAPI;
-  // @ts-ignore
-  window.api = api;
+  const fallbackWindow = window as typeof window & {
+    electron: typeof electronAPI;
+    api: typeof api;
+  };
+  fallbackWindow.electron = electronAPI;
+  fallbackWindow.api = api;
 }

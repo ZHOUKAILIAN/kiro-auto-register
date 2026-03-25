@@ -137,12 +137,12 @@ You must maintain awareness of:
 
 2. **Key Services**
    - `tempmail.ts`: Tempmail.lol API integration
-   - `kiroRegister.ts`: AWS Kiro registration automation
+   - `kiroRegister.ts`: AWS Kiro pure API registration entrypoint
    - `exporter.ts`: claude-api format export
 
 3. **Technology Stack**
    - Electron 38.x for desktop application
-   - Playwright for browser automation
+   - Pure HTTP / API workflow for registration
    - TypeScript for type safety
    - SQLite for local data storage
 
