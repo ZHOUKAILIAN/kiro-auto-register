@@ -1,5 +1,6 @@
 import { createFetchContext, type FetchImpl } from './httpClient.ts';
 import { formatErrorDetails } from './errorDetails.ts';
+import { probeMoeMailProvider } from './moemail.ts';
 import {
   probeOutlookMailbox,
   type OutlookMailboxProbeResult
@@ -7,6 +8,7 @@ import {
 import { createInbox, type TempmailInbox } from './tempmail.ts';
 import type {
   MailboxProvider,
+  ManagedEmailProvider,
   RegisterDiagnostics,
   RegistrationFailureSummary
 } from '../shared/contracts.ts';
@@ -16,6 +18,28 @@ interface RunRegisterDiagnosticsOptions {
   lastFailure?: RegistrationFailureSummary;
   fetchImpl?: FetchImpl;
   createInboxFn?: (options: { fetchImpl?: FetchImpl }) => Promise<TempmailInbox>;
+  managedEmailConfig?:
+    | {
+        provider: Extract<ManagedEmailProvider, 'tempmail.lol'>;
+      }
+    | {
+        provider: Extract<ManagedEmailProvider, 'moemail-api'>;
+        baseUrl: string;
+        apiKey: string;
+        preferredDomain?: string;
+      };
+  probeManagedEmailFn?: (options: {
+    provider: Extract<ManagedEmailProvider, 'moemail-api'>;
+    baseUrl: string;
+    apiKey: string;
+    preferredDomain?: string;
+    fetchImpl?: FetchImpl;
+  }) => Promise<{
+    provider: ManagedEmailProvider;
+    success: boolean;
+    message: string;
+    email?: string;
+  }>;
   mailboxConfig?: {
     provider: MailboxProvider;
     email: string;
@@ -64,10 +88,43 @@ export async function runRegisterDiagnostics(
   const fetchImpl = options.fetchImpl ?? fetchContext?.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const createInboxFn = options.createInboxFn ?? createInbox;
   const probeOutlookMailboxFn = options.probeOutlookMailboxFn ?? probeOutlookMailbox;
+  const probeManagedEmailFn =
+    options.probeManagedEmailFn ??
+    (async (managedOptions: {
+      provider: Extract<ManagedEmailProvider, 'moemail-api'>;
+      baseUrl: string;
+      apiKey: string;
+      preferredDomain?: string;
+      fetchImpl?: FetchImpl;
+    }) =>
+      probeMoeMailProvider({
+        baseUrl: managedOptions.baseUrl,
+        apiKey: managedOptions.apiKey,
+        preferredDomain: managedOptions.preferredDomain,
+        fetchImpl: managedOptions.fetchImpl
+      }));
 
   try {
     const egress = await fetchEgressInfo(fetchImpl);
+    let managedEmail: RegisterDiagnostics['managedEmail'];
     let mailbox: RegisterDiagnostics['mailbox'];
+
+    if (options.managedEmailConfig?.provider === 'moemail-api') {
+      const probeResult = await probeManagedEmailFn({
+        provider: 'moemail-api',
+        baseUrl: options.managedEmailConfig.baseUrl,
+        apiKey: options.managedEmailConfig.apiKey,
+        preferredDomain: options.managedEmailConfig.preferredDomain,
+        fetchImpl
+      });
+
+      managedEmail = {
+        provider: 'moemail-api',
+        success: probeResult.success,
+        message: probeResult.message,
+        email: probeResult.email
+      };
+    }
 
     if (options.mailboxConfig?.provider === 'outlook-graph') {
       const probeResult = await probeOutlookMailboxFn({
@@ -100,6 +157,16 @@ export async function runRegisterDiagnostics(
         executedAt: Date.now(),
         proxyUrl: options.proxyUrl,
         egress,
+        managedEmail:
+          managedEmail ??
+          (options.managedEmailConfig?.provider === 'tempmail.lol'
+            ? {
+                provider: 'tempmail.lol',
+                success: true,
+                message: 'Tempmail provider 可用',
+                email: inbox.email
+              }
+            : undefined),
         mailbox,
         tempmail: {
           success: true,
@@ -118,6 +185,15 @@ export async function runRegisterDiagnostics(
         executedAt: Date.now(),
         proxyUrl: options.proxyUrl,
         egress,
+        managedEmail:
+          managedEmail ??
+          (options.managedEmailConfig?.provider === 'tempmail.lol'
+            ? {
+                provider: 'tempmail.lol',
+                success: false,
+                message: `Tempmail provider 不可用: ${formatErrorDetails(error)}`
+              }
+            : undefined),
         mailbox,
         tempmail: {
           success: false,

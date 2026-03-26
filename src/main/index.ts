@@ -136,6 +136,21 @@ function saveSettings(settings: Partial<AppSettings>): AppSettings {
   return merged;
 }
 
+function buildMoeMailConfig(settings: Pick<
+  AppSettings,
+  'moemailApiKey' | 'moemailBaseUrl' | 'moemailPreferredDomain'
+>): {
+  baseUrl: string;
+  apiKey: string;
+  preferredDomain?: string;
+} {
+  return {
+    baseUrl: settings.moemailBaseUrl,
+    apiKey: settings.moemailApiKey,
+    preferredDomain: settings.moemailPreferredDomain || undefined
+  };
+}
+
 function selectAccounts(accountIds?: number[]): StoredAccount[] {
   const accounts = getAccounts();
   if (!accountIds || accountIds.length === 0) {
@@ -227,6 +242,12 @@ async function runRegisterWorkflow(options: RegisterOptions): Promise<BatchRegis
         onProgress: emitProgress,
         proxyUrl: options.proxyUrl,
         registrationEmailMode: options.registrationEmailMode,
+        managedEmailProvider: options.managedEmailProvider,
+        moemailConfig: {
+          baseUrl: options.moemailBaseUrl,
+          apiKey: options.moemailApiKey,
+          preferredDomain: options.moemailPreferredDomain
+        },
         customEmailAddress: options.customEmailAddress,
         otpMode: options.otpMode,
         requestOtp: async ({ email, source, otpSentAt }) => {
@@ -326,6 +347,10 @@ function setupIPCHandlers(): void {
       count: options?.count ?? settings.registerCount,
       proxyUrl: options?.proxyUrl || settings.proxyUrl || undefined,
       registrationEmailMode: options?.registrationEmailMode ?? settings.registrationEmailMode,
+      managedEmailProvider: options?.managedEmailProvider ?? settings.managedEmailProvider,
+      moemailBaseUrl: options?.moemailBaseUrl ?? settings.moemailBaseUrl,
+      moemailApiKey: options?.moemailApiKey ?? settings.moemailApiKey,
+      moemailPreferredDomain: options?.moemailPreferredDomain ?? settings.moemailPreferredDomain,
       customEmailAddress: options?.customEmailAddress ?? settings.customEmailAddress,
       otpMode: options?.otpMode ?? settings.otpMode
     });
@@ -345,29 +370,42 @@ function setupIPCHandlers(): void {
     }
   );
 
-  ipcMain.handle('run-register-diagnostics', async (_event, proxyUrl?: string): Promise<RegisterDiagnostics> => {
-    const settings = getSettings();
-    const diagnostics = await runRegisterDiagnostics({
-      proxyUrl: normalizeOptionalProxyUrl(proxyUrl),
-      lastFailure: registerRuntime.getState().lastFailure,
-      mailboxConfig:
-        settings.registrationEmailMode === 'custom' && settings.otpMode === 'mailbox'
-          ? {
-              provider: settings.mailboxProvider,
-              email: settings.customEmailAddress,
-              clientId: settings.outlookClientId,
-              refreshToken: settings.outlookRefreshToken,
-              onRefreshToken: (value: string) => {
-                persistRotatedOutlookRefreshToken(settings, value, 'diagnostics');
+  ipcMain.handle(
+    'run-register-diagnostics',
+    async (_event, nextSettings?: Partial<AppSettings>): Promise<RegisterDiagnostics> => {
+      const settings = normalizeSettings({
+        ...getSettings(),
+        ...nextSettings
+      });
+      const diagnostics = await runRegisterDiagnostics({
+        proxyUrl: normalizeOptionalProxyUrl(settings.proxyUrl),
+        lastFailure: registerRuntime.getState().lastFailure,
+        managedEmailConfig:
+          settings.registrationEmailMode === 'tempmail'
+            ? {
+                provider: settings.managedEmailProvider,
+                ...buildMoeMailConfig(settings)
               }
-            }
-          : undefined,
-      probeOutlookMailboxFn: probeOutlookMailbox
-    });
-    registerRuntime.setDiagnostics(diagnostics);
-    emitRegisterRuntimeState();
-    return diagnostics;
-  });
+            : undefined,
+        mailboxConfig:
+          settings.registrationEmailMode === 'custom' && settings.otpMode === 'mailbox'
+            ? {
+                provider: settings.mailboxProvider,
+                email: settings.customEmailAddress,
+                clientId: settings.outlookClientId,
+                refreshToken: settings.outlookRefreshToken,
+                onRefreshToken: (value: string) => {
+                  persistRotatedOutlookRefreshToken(settings, value, 'diagnostics');
+                }
+              }
+            : undefined,
+        probeOutlookMailboxFn: probeOutlookMailbox
+      });
+      registerRuntime.setDiagnostics(diagnostics);
+      emitRegisterRuntimeState();
+      return diagnostics;
+    }
+  );
 
   ipcMain.handle('export-accounts', async (_event, accountIds?: number[]): Promise<string> => {
     return JSON.stringify(buildExportPayload(selectAccounts(accountIds)), null, 2);

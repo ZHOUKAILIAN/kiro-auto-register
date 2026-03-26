@@ -115,3 +115,40 @@ test('runRegisterDiagnostics includes Outlook mailbox probe summary when mailbox
     email: 'owner@outlook.com'
   });
 });
+
+test('runRegisterDiagnostics includes managed provider summary when MoeMail is selected', async () => {
+  const diagnostics = await runRegisterDiagnostics({
+    fetchImpl: async () =>
+      Response.json({
+        ip: '152.70.135.144',
+        city: 'Seoul',
+        region: 'Seoul',
+        country: 'KR',
+        org: 'Example Network'
+      }),
+    createInboxFn: async () => ({
+      email: 'diag@example.com',
+      token: 'diag-token',
+      createdAt: 1_764_000_000_000
+    }),
+    managedEmailConfig: {
+      provider: 'moemail-api',
+      baseUrl: 'https://moemail.app',
+      apiKey: 'mk_test_123',
+      preferredDomain: 'moemail.app'
+    },
+    probeManagedEmailFn: async () => ({
+      provider: 'moemail-api',
+      success: true,
+      message: 'MoeMail provider 可用',
+      email: 'aws-bot@moemail.app'
+    })
+  });
+
+  assert.deepEqual(diagnostics.managedEmail, {
+    provider: 'moemail-api',
+    success: true,
+    message: 'MoeMail provider 可用',
+    email: 'aws-bot@moemail.app'
+  });
+});

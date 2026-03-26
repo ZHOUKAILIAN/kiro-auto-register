@@ -27,8 +27,8 @@ const api = {
     ipcRenderer.invoke('get-register-runtime-state'),
   submitRegisterOtp: (taskId: string, otp: string): Promise<ManualOtpSubmitResult> =>
     ipcRenderer.invoke('submit-register-otp', taskId, otp),
-  runRegisterDiagnostics: (proxyUrl?: string): Promise<RegisterDiagnostics> =>
-    ipcRenderer.invoke('run-register-diagnostics', proxyUrl),
+  runRegisterDiagnostics: (settings?: Partial<AppSettings>): Promise<RegisterDiagnostics> =>
+    ipcRenderer.invoke('run-register-diagnostics', settings),
   onRegisterProgress: (callback: (message: string) => void): void => {
     ipcRenderer.on('register-progress', (_event, message: string) => callback(message));
   },

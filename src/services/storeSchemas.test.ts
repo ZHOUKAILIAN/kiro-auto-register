@@ -11,7 +11,11 @@ test('normalizeSettings backfills defaults and preserves known values', () => {
   const normalized = normalizeSettings({
     proxyUrl: 'http://127.0.0.1:7890',
     registerCount: 3,
-    registrationEmailMode: 'custom',
+    registrationEmailMode: 'tempmail',
+    managedEmailProvider: 'moemail-api',
+    moemailBaseUrl: 'https://moemail.app',
+    moemailApiKey: 'mk_test_123',
+    moemailPreferredDomain: 'moemail.app',
     customEmailAddress: 'owner@example.com',
     otpMode: 'manual',
     mailboxProvider: 'outlook-graph',
@@ -28,7 +32,11 @@ test('normalizeSettings backfills defaults and preserves known values', () => {
     ...DEFAULT_SETTINGS,
     proxyUrl: 'http://127.0.0.1:7890',
     registerCount: 3,
-    registrationEmailMode: 'custom',
+    registrationEmailMode: 'tempmail',
+    managedEmailProvider: 'moemail-api',
+    moemailBaseUrl: 'https://moemail.app',
+    moemailApiKey: 'mk_test_123',
+    moemailPreferredDomain: 'moemail.app',
     customEmailAddress: 'owner@example.com',
     otpMode: 'manual',
     mailboxProvider: 'outlook-graph',
@@ -52,6 +60,25 @@ test('normalizeSettings safely ignores legacy downstream integration fields', ()
   });
 
   assert.deepEqual(normalized, DEFAULT_SETTINGS);
+});
+
+test('normalizeSettings backfills MoeMail provider fields for legacy settings payloads', () => {
+  const normalized = normalizeSettings({
+    proxyUrl: 'http://127.0.0.1:7890',
+    registerCount: 2,
+    registrationEmailMode: 'tempmail'
+  });
+
+  assert.deepEqual(normalized, {
+    ...DEFAULT_SETTINGS,
+    proxyUrl: 'http://127.0.0.1:7890',
+    registerCount: 2,
+    registrationEmailMode: 'tempmail',
+    managedEmailProvider: 'tempmail.lol',
+    moemailBaseUrl: 'https://moemail.app',
+    moemailApiKey: '',
+    moemailPreferredDomain: ''
+  });
 });
 
 test('normalizeSettings backfills Outlook mailbox fields for legacy settings payloads', () => {

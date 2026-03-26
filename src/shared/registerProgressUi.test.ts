@@ -24,6 +24,24 @@ test('buildRegisterStartupMessages explains immediate registration context witho
   );
 });
 
+test('buildRegisterStartupMessages surfaces the selected managed inbox provider when using MoeMail', () => {
+  assert.deepEqual(
+    buildRegisterStartupMessages({
+      count: 1,
+      proxyUrl: 'http://127.0.0.1:7890',
+      registrationEmailMode: 'tempmail',
+      managedEmailProvider: 'moemail-api',
+      otpMode: 'tempmail'
+    }),
+    [
+      '已提交注册任务，准备启动 1 个注册流程',
+      '网络出口：代理 http://127.0.0.1:7890',
+      '邮箱来源：自动邮箱提供方（MoeMail API）',
+      'OTP 获取：自动轮询（MoeMail API）'
+    ]
+  );
+});
+
 test('buildRegisterStartupMessages describes custom mailbox and manual otp modes', () => {
   assert.deepEqual(
     buildRegisterStartupMessages({

@@ -21,7 +21,7 @@ declare global {
       startRegister: (options: Partial<RegisterOptions>) => Promise<BatchRegisterResult>;
       getRegisterRuntimeState: () => Promise<RegisterRuntimeState>;
       submitRegisterOtp: (taskId: string, otp: string) => Promise<ManualOtpSubmitResult>;
-      runRegisterDiagnostics: (proxyUrl?: string) => Promise<RegisterDiagnostics>;
+      runRegisterDiagnostics: (settings?: Partial<AppSettings>) => Promise<RegisterDiagnostics>;
       onRegisterProgress: (callback: (message: string) => void) => void;
       removeRegisterProgressListener: () => void;
       onRegisterRuntimeState: (callback: (state: RegisterRuntimeState) => void) => void;

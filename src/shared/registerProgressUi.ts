@@ -1,15 +1,33 @@
 import type {
   BatchRegisterResult,
   MailboxProvider,
+  ManagedEmailProvider,
   OtpMode,
   RegistrationEmailMode
 } from './contracts.ts';
 
-function describeEmailMode(mode: RegistrationEmailMode): string {
-  return mode === 'custom' ? '我自己的邮箱' : 'Tempmail 自动创建';
+function describeManagedEmailProvider(provider?: ManagedEmailProvider): string {
+  return provider === 'moemail-api' ? 'MoeMail API' : 'Tempmail.lol';
 }
 
-function describeOtpMode(mode: OtpMode, mailboxProvider?: MailboxProvider): string {
+function describeEmailMode(
+  mode: RegistrationEmailMode,
+  managedEmailProvider?: ManagedEmailProvider
+): string {
+  if (mode === 'custom') {
+    return '我自己的邮箱';
+  }
+
+  return managedEmailProvider === 'moemail-api'
+    ? '自动邮箱提供方（MoeMail API）'
+    : 'Tempmail 自动创建';
+}
+
+function describeOtpMode(
+  mode: OtpMode,
+  mailboxProvider?: MailboxProvider,
+  managedEmailProvider?: ManagedEmailProvider
+): string {
   if (mode === 'manual') {
     return '界面手动输入';
   }
@@ -20,7 +38,9 @@ function describeOtpMode(mode: OtpMode, mailboxProvider?: MailboxProvider): stri
       : '邮箱自动收码';
   }
 
-  return 'Tempmail 自动轮询';
+  return managedEmailProvider === 'moemail-api'
+    ? `自动轮询（${describeManagedEmailProvider(managedEmailProvider)}）`
+    : 'Tempmail 自动轮询';
 }
 
 export function maskProxyUrlForDisplay(proxyUrl: string): string {
@@ -57,6 +77,7 @@ export function maskProxyUrlForDisplay(proxyUrl: string): string {
 
 export function buildRegisterStartupMessages(input: {
   count: number;
+  managedEmailProvider?: ManagedEmailProvider;
   mailboxProvider?: MailboxProvider;
   proxyUrl: string;
   registrationEmailMode: RegistrationEmailMode;
@@ -71,8 +92,12 @@ export function buildRegisterStartupMessages(input: {
   return [
     `已提交注册任务，准备启动 ${input.count} 个注册流程`,
     proxyUrl ? `网络出口：代理 ${proxyUrl}` : '网络出口：未设置代理，将使用当前系统网络',
-    `邮箱来源：${describeEmailMode(input.registrationEmailMode)}`,
-    `OTP 获取：${describeOtpMode(effectiveOtpMode, input.mailboxProvider)}`
+    `邮箱来源：${describeEmailMode(input.registrationEmailMode, input.managedEmailProvider)}`,
+    `OTP 获取：${describeOtpMode(
+      effectiveOtpMode,
+      input.mailboxProvider,
+      input.managedEmailProvider
+    )}`
   ];
 }
 

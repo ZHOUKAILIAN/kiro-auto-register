@@ -120,6 +120,7 @@ function App() {
     setProgress(
       buildRegisterStartupMessages({
         count: settings.registerCount,
+        managedEmailProvider: settings.managedEmailProvider,
         mailboxProvider: settings.mailboxProvider,
         proxyUrl: settings.proxyUrl,
         registrationEmailMode: settings.registrationEmailMode,
@@ -133,6 +134,10 @@ function App() {
         count: settings.registerCount,
         proxyUrl: settings.proxyUrl,
         registrationEmailMode: settings.registrationEmailMode,
+        managedEmailProvider: settings.managedEmailProvider,
+        moemailBaseUrl: settings.moemailBaseUrl,
+        moemailApiKey: settings.moemailApiKey,
+        moemailPreferredDomain: settings.moemailPreferredDomain,
         customEmailAddress: settings.customEmailAddress,
         otpMode: settings.otpMode
       });
@@ -198,8 +203,12 @@ function App() {
   async function handleRunDiagnostics(): Promise<void> {
     setBusyAction('diagnostics');
     try {
-      const diagnostics = await window.api.runRegisterDiagnostics(settings.proxyUrl);
-      const summaries = [diagnostics.tempmail.message, diagnostics.mailbox?.message].filter(Boolean);
+      const diagnostics = await window.api.runRegisterDiagnostics(settings);
+      const summaries = [
+        diagnostics.tempmail.message,
+        diagnostics.managedEmail?.message,
+        diagnostics.mailbox?.message
+      ].filter(Boolean);
       setFlashMessage(`诊断完成：${summaries.join('；')}`);
     } catch (error) {
       setFlashMessage(`运行诊断失败：${toErrorMessage(error)}`);
@@ -276,6 +285,8 @@ function App() {
   const pendingOtp = runtimeState.pendingOtp;
   const hasAccounts = accounts.length > 0;
   const hasSelectedAccounts = selectedIds.size > 0;
+  const managedEmailProviderLabel =
+    settings.managedEmailProvider === 'moemail-api' ? 'MoeMail API' : 'Tempmail.lol';
   const effectiveOtpMode =
     settings.registrationEmailMode === 'custom' && settings.otpMode === 'tempmail'
       ? 'manual'
@@ -385,7 +396,7 @@ function App() {
                     }));
                   }}
                 >
-                  <option value="tempmail">Tempmail 自动创建</option>
+                  <option value="tempmail">应用自动创建邮箱</option>
                   <option value="custom">我自己的邮箱</option>
                 </select>
               </label>
@@ -406,12 +417,81 @@ function App() {
                     </>
                   ) : (
                     <>
-                      <option value="tempmail">自动轮询 tempmail</option>
+                      <option value="tempmail">自动轮询当前邮箱提供方</option>
                       <option value="manual">界面手动输入 OTP</option>
                     </>
                   )}
                 </select>
               </label>
+
+              {settings.registrationEmailMode === 'tempmail' ? (
+                <>
+                  <label className="field field-span-2">
+                    <span>自动邮箱提供方</span>
+                    <select
+                      className="text-input"
+                      value={settings.managedEmailProvider}
+                      onChange={(event) =>
+                        updateSettings(
+                          'managedEmailProvider',
+                          event.target.value as AppSettings['managedEmailProvider']
+                        )
+                      }
+                    >
+                      <option value="tempmail.lol">Tempmail.lol</option>
+                      <option value="moemail-api">MoeMail API</option>
+                    </select>
+                    <small className="field-hint">
+                      `Tempmail.lol` 适合匿名临时邮箱；`MoeMail API` 适合你已经有账号和 API Key 的场景。
+                    </small>
+                  </label>
+
+                  {settings.managedEmailProvider === 'moemail-api' ? (
+                    <>
+                      <label className="field field-span-2">
+                        <span>MoeMail Base URL</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          placeholder="https://moemail.app"
+                          value={settings.moemailBaseUrl}
+                          onChange={(event) => updateSettings('moemailBaseUrl', event.target.value)}
+                        />
+                      </label>
+
+                      <label className="field field-span-2">
+                        <span>MoeMail API Key</span>
+                        <textarea
+                          className="text-input"
+                          rows={3}
+                          placeholder="mk_xxxxx"
+                          value={settings.moemailApiKey}
+                          onChange={(event) => updateSettings('moemailApiKey', event.target.value)}
+                        />
+                        <small className="field-hint">
+                          当前项目不会自动注册 MoeMail 账号，只会使用你已有账号的 API Key 进行建箱和收码。
+                        </small>
+                      </label>
+
+                      <label className="field field-span-2">
+                        <span>MoeMail 优选域名</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          placeholder="moemail.app"
+                          value={settings.moemailPreferredDomain}
+                          onChange={(event) =>
+                            updateSettings('moemailPreferredDomain', event.target.value)
+                          }
+                        />
+                        <small className="field-hint">
+                          留空时会自动读取 `/api/config` 并使用第一个可用域名。
+                        </small>
+                      </label>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
 
               {settings.registrationEmailMode === 'custom' ? (
                 <>
@@ -518,8 +598,11 @@ function App() {
               <p>导出按钮会生成标准账号 JSON，后续由你在别处自行消费，不在当前应用里耦合下游仓库。</p>
             </div>
             <div className="hint-card">
-              <span className="hint-label">OTP 回退</span>
-              <p>自定义邮箱既可以走手动 OTP，也可以走 Outlook 邮箱自动收码，失败日志都会继续写进当前面板。</p>
+              <span className="hint-label">邮箱策略</span>
+              <p>
+                当前自动邮箱提供方是 <strong>{managedEmailProviderLabel}</strong>。自定义邮箱仍可走手动 OTP 或 Outlook
+                自动收码，失败日志都会继续写进当前面板。
+              </p>
             </div>
           </div>
 
@@ -551,6 +634,23 @@ function App() {
                 <strong>{getTempmailAvailabilityLabel(diagnostics)}</strong>
                 <p>{diagnostics?.tempmail.message || '点击“运行诊断”检查邮箱创建能力'}</p>
               </div>
+              {settings.registrationEmailMode === 'tempmail' &&
+              settings.managedEmailProvider === 'moemail-api' ? (
+                <div className="diagnostic-item">
+                  <span className="diagnostic-label">当前自动邮箱</span>
+                  <strong>
+                    {diagnostics?.managedEmail
+                      ? diagnostics.managedEmail.success
+                        ? '可用'
+                        : '不可用'
+                      : '待检测'}
+                  </strong>
+                  <p>
+                    {diagnostics?.managedEmail?.message ||
+                      '点击“运行诊断”验证 MoeMail API Key、域名和建箱能力'}
+                  </p>
+                </div>
+              ) : null}
               <div className="diagnostic-item">
                 <span className="diagnostic-label">最近阻塞</span>
                 <strong>{runtimeState.lastFailure?.stage || '暂无'}</strong>

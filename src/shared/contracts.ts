@@ -2,6 +2,7 @@ export type AccountAuthMethod = 'builder-id' | 'idc';
 export type RegistrationEmailMode = 'tempmail' | 'custom';
 export type OtpMode = 'tempmail' | 'manual' | 'mailbox';
 export type MailboxProvider = 'outlook-graph';
+export type ManagedEmailProvider = 'tempmail.lol' | 'moemail-api';
 
 export interface StoredAccount {
   id: number;
@@ -28,6 +29,10 @@ export interface AppSettings {
   proxyUrl: string;
   registerCount: number;
   registrationEmailMode: RegistrationEmailMode;
+  managedEmailProvider: ManagedEmailProvider;
+  moemailBaseUrl: string;
+  moemailApiKey: string;
+  moemailPreferredDomain: string;
   customEmailAddress: string;
   otpMode: OtpMode;
   mailboxProvider: MailboxProvider;
@@ -44,6 +49,10 @@ export interface RegisterOptions {
   count: number;
   proxyUrl?: string;
   registrationEmailMode?: RegistrationEmailMode;
+  managedEmailProvider?: ManagedEmailProvider;
+  moemailBaseUrl?: string;
+  moemailApiKey?: string;
+  moemailPreferredDomain?: string;
   customEmailAddress?: string;
   otpMode?: OtpMode;
 }
@@ -79,6 +88,12 @@ export interface RegisterDiagnostics {
     org?: string;
   };
   tempmail: {
+    success: boolean;
+    message: string;
+    email?: string;
+  };
+  managedEmail?: {
+    provider: ManagedEmailProvider;
     success: boolean;
     message: string;
     email?: string;

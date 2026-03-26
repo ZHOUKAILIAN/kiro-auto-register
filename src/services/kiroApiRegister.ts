@@ -17,11 +17,19 @@ import {
 } from './httpClient.ts';
 import { fetchEgressInfo } from './registerDiagnostics.ts';
 import {
+  createMoeMailInbox,
+  waitForMoeMailVerificationCode
+} from './moemail.ts';
+import {
   createInbox,
   waitForVerificationCode,
   type TempmailInbox
 } from './tempmail.ts';
-import type { OtpMode, RegistrationEmailMode } from '../shared/contracts.ts';
+import type {
+  ManagedEmailProvider,
+  OtpMode,
+  RegistrationEmailMode
+} from '../shared/contracts.ts';
 
 export interface RegisterResult {
   success: boolean;
@@ -38,8 +46,10 @@ export interface RegisterResult {
 interface RegistrationInbox {
   email: string;
   token?: string;
+  providerId?: string;
   createdAt: number;
   source: RegistrationEmailMode;
+  managedProvider?: ManagedEmailProvider;
 }
 
 export interface OtpRequest {
@@ -53,6 +63,12 @@ export interface AutoRegisterFlowOptions {
   onProgress?: (message: string) => void;
   proxyUrl?: string;
   registrationEmailMode?: RegistrationEmailMode;
+  managedEmailProvider?: ManagedEmailProvider;
+  moemailConfig?: {
+    baseUrl?: string;
+    apiKey?: string;
+    preferredDomain?: string;
+  };
   customEmailAddress?: string;
   otpMode?: OtpMode;
   requestOtp?: (request: OtpRequest) => Promise<string | null>;
@@ -62,6 +78,12 @@ interface ResolvedAutoRegisterFlowOptions {
   onProgress?: (message: string) => void;
   proxyUrl?: string;
   registrationEmailMode: RegistrationEmailMode;
+  managedEmailProvider: ManagedEmailProvider;
+  moemailConfig?: {
+    baseUrl: string;
+    apiKey: string;
+    preferredDomain: string;
+  };
   customEmailAddress: string;
   otpMode: OtpMode;
   requestOtp?: (request: OtpRequest) => Promise<string | null>;
@@ -373,7 +395,8 @@ function createExistingInboxFromEnvironment(
     email,
     token,
     createdAt: Date.now(),
-    source: 'tempmail'
+    source: 'tempmail',
+    managedProvider: 'tempmail.lol'
   };
 }
 
@@ -382,6 +405,14 @@ function normalizeFlowOptions(options: AutoRegisterFlowOptions = {}): ResolvedAu
     onProgress: options.onProgress,
     proxyUrl: options.proxyUrl,
     registrationEmailMode: options.registrationEmailMode ?? 'tempmail',
+    managedEmailProvider: options.managedEmailProvider ?? 'tempmail.lol',
+    moemailConfig: options.moemailConfig
+      ? {
+          baseUrl: options.moemailConfig.baseUrl?.trim() ?? '',
+          apiKey: options.moemailConfig.apiKey?.trim() ?? '',
+          preferredDomain: options.moemailConfig.preferredDomain?.trim() ?? ''
+        }
+      : undefined,
     customEmailAddress: options.customEmailAddress?.trim() ?? '',
     otpMode: options.otpMode ?? 'tempmail',
     requestOtp: options.requestOtp
@@ -429,8 +460,26 @@ async function resolveInbox(
   }
 
   const existingInbox = createExistingInboxFromEnvironment();
-  if (existingInbox) {
+  if (existingInbox && options.managedEmailProvider === 'tempmail.lol') {
     return existingInbox;
+  }
+
+  if (options.managedEmailProvider === 'moemail-api') {
+    const inbox = await createMoeMailInbox({
+      baseUrl: options.moemailConfig?.baseUrl,
+      apiKey: options.moemailConfig?.apiKey ?? '',
+      preferredDomain: options.moemailConfig?.preferredDomain,
+      fetchImpl,
+      onProgress: options.onProgress
+    });
+
+    return {
+      email: inbox.email,
+      providerId: inbox.id,
+      createdAt: inbox.createdAt,
+      source: 'tempmail',
+      managedProvider: 'moemail-api'
+    };
   }
 
   const inbox = await createInbox({
@@ -440,7 +489,8 @@ async function resolveInbox(
 
   return {
     ...inbox,
-    source: 'tempmail'
+    source: 'tempmail',
+    managedProvider: 'tempmail.lol'
   };
 }
 
@@ -482,6 +532,26 @@ async function resolveOtpCode(
   }
 
   if (!inbox.token) {
+    if (inbox.managedProvider === 'moemail-api' && inbox.providerId) {
+      return waitForMoeMailVerificationCode(
+        {
+          id: inbox.providerId,
+          email: inbox.email,
+          createdAt: inbox.createdAt,
+          provider: 'moemail-api'
+        },
+        120_000,
+        {
+          baseUrl: options.moemailConfig?.baseUrl,
+          apiKey: options.moemailConfig?.apiKey ?? '',
+          preferredDomain: options.moemailConfig?.preferredDomain,
+          otpSentAt,
+          fetchImpl,
+          onProgress: options.onProgress
+        }
+      );
+    }
+
     throw new Error('当前 OTP 模式需要临时邮箱 token，请改用手动 OTP');
   }
 

@@ -4,6 +4,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   proxyUrl: '',
   registerCount: 1,
   registrationEmailMode: 'tempmail',
+  managedEmailProvider: 'tempmail.lol',
+  moemailBaseUrl: 'https://moemail.app',
+  moemailApiKey: '',
+  moemailPreferredDomain: '',
   customEmailAddress: '',
   otpMode: 'tempmail',
   mailboxProvider: 'outlook-graph',
@@ -43,6 +47,16 @@ export function normalizeSettings(input: unknown): AppSettings {
       settings.registrationEmailMode,
       DEFAULT_SETTINGS.registrationEmailMode
     ) as AppSettings['registrationEmailMode'],
+    managedEmailProvider: readString(
+      settings.managedEmailProvider,
+      DEFAULT_SETTINGS.managedEmailProvider
+    ) as AppSettings['managedEmailProvider'],
+    moemailBaseUrl: readString(settings.moemailBaseUrl, DEFAULT_SETTINGS.moemailBaseUrl),
+    moemailApiKey: readString(settings.moemailApiKey, DEFAULT_SETTINGS.moemailApiKey),
+    moemailPreferredDomain: readString(
+      settings.moemailPreferredDomain,
+      DEFAULT_SETTINGS.moemailPreferredDomain
+    ),
     customEmailAddress: readString(settings.customEmailAddress, DEFAULT_SETTINGS.customEmailAddress),
     otpMode: readString(settings.otpMode, DEFAULT_SETTINGS.otpMode) as AppSettings['otpMode'],
     mailboxProvider: readString(
