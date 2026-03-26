@@ -2,20 +2,24 @@
 
 ## 🎉 项目创建成功!
 
-**GitHub 仓库**: https://github.com/ZHOUKAILIAN/kiro-auto-register
+**GitHub 仓库**: https://github.com/ZHOUKAILIAN/kiro-manager
 **状态**: 私有仓库 (Private)
+
+> 当前产品定位已经收敛为“注册 + 本地账号池 + 导出工作台”。下文若提到外部仓库集成，多为历史里程碑记录，不代表当前 UI 仍会直接暴露这些入口。
 
 ## 📦 项目结构
 
-**本地路径**: `~/Desktop/mySelf/kiro-auto-register`
+**本地路径**: `~/Desktop/mySelf/kiro-manager`
 
 ```
-kiro-auto-register/
+kiro-manager/
 ├── src/
-│   └── services/
-│       ├── tempmail.ts       # Tempmail.lol 邮箱服务
-│       ├── kiroRegister.ts   # Kiro 自动注册核心逻辑
-│       └── exporter.ts       # 导出到 claude-api 格式
+│   ├── main/                 # Electron 主进程与 IPC
+│   ├── preload/              # Preload bridge
+│   ├── renderer/             # React UI 工作台
+│   ├── services/             # 核心服务与测试
+│   └── shared/               # 前后端共享类型
+├── docs/                     # requirements / design / analysis / standards
 ├── README.md                 # 项目说明
 ├── USAGE.md                  # 使用指南
 ├── LICENSE                   # MIT 许可证
@@ -40,25 +44,30 @@ kiro-auto-register/
 - 支持代理配置
 - 获取 SSO Token
 
-### 3. claude-api 导出 ✅
+### 3. 标准账号导出 ✅
 - 标准 JSON 格式
 - 批量导出支持
-- 一键导入到 claude-api
-- 完整的导入说明
+- 兼容既有消费方的数据结构
+- 当前应用不再直接承担外部仓库导入控制台职责
+
+### 4. 手动 OTP 回退与链路诊断 ✅
+- 自定义邮箱 + 手动 OTP 输入
+- 渲染进程重载后恢复待输入验证码状态
+- 一键查看出口 IP / `tempmail` / AWS 最近阻塞摘要
 
 ## 🚀 快速开始
 
 ### 克隆仓库
 
 ```bash
-git clone https://github.com/ZHOUKAILIAN/kiro-auto-register.git
-cd kiro-auto-register
+git clone https://github.com/ZHOUKAILIAN/kiro-manager.git
+cd kiro-manager
 ```
 
 ### 安装依赖
 
 ```bash
-npm install
+npm install --legacy-peer-deps
 ```
 
 ### 运行
@@ -69,18 +78,16 @@ npm run dev
 
 ## 📋 待完成任务
 
-### 必须完成
-- [ ] 实现 Electron 主进程代码
-- [ ] 创建 UI 界面（React/Vue）
-- [ ] 实现账号数据库存储
-- [ ] 添加批量注册功能
+### 当前阻塞项
+- [ ] 找到能通过 AWS TES 风控的运行条件
+- [ ] 验证 `新注册账号 -> 凭证兑换 -> 导入 claude-api -> chat probe` 全链路
+- [ ] 实现自带邮箱 IMAP / POP3 自动收码，替代手动 OTP
 
-### 建议完成
-- [ ] 添加代理池管理
-- [ ] 实现任务队列
-- [ ] 添加日志系统
+### 下一批工程项
+- [x] 统一仓库内主要文档与展示名称到 `kiro-manager`
+- [x] 根据真实验证结果更新 requirement / design / analysis 文档
+- [ ] 补充可复用的外部链路诊断脚本
 - [ ] 创建 GitHub Actions 自动构建
-- [ ] 添加单元测试
 
 ## 🔗 相关项目
 
@@ -109,23 +116,25 @@ npm run dev
 - ✅ 实现 claude-api 导出功能
 - ✅ 编写完整文档
 - ✅ 移动到 mySelf 文件夹
+- ✅ 将 GitHub 仓库重命名为 `kiro-manager`
+- ✅ 验证当前 TUN 出口可正常创建 `tempmail.lol` 邮箱
+- ✅ 验证纯 API 与浏览器路径都会在 `profile /send-otp` 遇到 AWS TES 拦截
+- ✅ 交付手动 OTP 回退能力与内置链路诊断
 
 ## 🎯 下一步计划
 
-1. **完善 UI 界面**
-   - 账号列表展示
-   - 注册进度显示
-   - 导出功能按钮
+1. **解决真实链路阻塞**
+   - 找到能通过 AWS TES 的网络 / 邮箱组合
+   - 继续推进到验证码送达与身份创建
+   - 完成首条成功导入 `claude-api` 的真实链路
 
-2. **增强稳定性**
-   - 错误重试机制
-   - 超时处理
-   - 日志记录
+2. **收敛文档与命名**
+   - 继续清理兼容层里残留的 `kiro-auto-register` 内部标识
+   - 保留现有本地数据目录兼容性，避免因内部包名切换丢失历史设置
 
-3. **优化性能**
-   - 并发注册
-   - 代理池轮换
-   - 资源管理
+3. **补充工程化验证**
+   - 固化外部阻塞点诊断脚本
+   - 增加回归验证命令与结果记录
 
 ## 💡 技术亮点
 

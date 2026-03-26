@@ -8,17 +8,12 @@ import { electronAPI } from '@electron-toolkit/preload';
 import type {
   AppSettings,
   BatchRegisterResult,
-  ClaudeChatProbeResult,
-  ClaudeImportResult,
-  CliproxyWriteResult,
+  ManualOtpSubmitResult,
+  RegisterDiagnostics,
   RegisterOptions,
+  RegisterRuntimeState,
   StoredAccount
 } from '../shared/contracts.ts';
-
-interface DirectorySelectionResult {
-  canceled: boolean;
-  path?: string;
-}
 
 const api = {
   getAccounts: (): Promise<StoredAccount[]> => ipcRenderer.invoke('get-accounts'),
@@ -28,22 +23,26 @@ const api = {
 
   startRegister: (options: Partial<RegisterOptions>): Promise<BatchRegisterResult> =>
     ipcRenderer.invoke('start-register', options),
+  getRegisterRuntimeState: (): Promise<RegisterRuntimeState> =>
+    ipcRenderer.invoke('get-register-runtime-state'),
+  submitRegisterOtp: (taskId: string, otp: string): Promise<ManualOtpSubmitResult> =>
+    ipcRenderer.invoke('submit-register-otp', taskId, otp),
+  runRegisterDiagnostics: (proxyUrl?: string): Promise<RegisterDiagnostics> =>
+    ipcRenderer.invoke('run-register-diagnostics', proxyUrl),
   onRegisterProgress: (callback: (message: string) => void): void => {
     ipcRenderer.on('register-progress', (_event, message: string) => callback(message));
   },
   removeRegisterProgressListener: (): void => {
     ipcRenderer.removeAllListeners('register-progress');
   },
+  onRegisterRuntimeState: (callback: (state: RegisterRuntimeState) => void): void => {
+    ipcRenderer.on('register-runtime-state', (_event, state: RegisterRuntimeState) => callback(state));
+  },
+  removeRegisterRuntimeStateListener: (): void => {
+    ipcRenderer.removeAllListeners('register-runtime-state');
+  },
 
   exportAccounts: (accountIds?: number[]): Promise<string> => ipcRenderer.invoke('export-accounts', accountIds),
-  importToClaudeApi: (accountIds?: number[]): Promise<ClaudeImportResult> =>
-    ipcRenderer.invoke('import-to-claude-api', accountIds),
-  probeClaudeApiChat: (): Promise<ClaudeChatProbeResult> =>
-    ipcRenderer.invoke('probe-claude-api-chat'),
-  writeCliproxyAuthFiles: (accountIds?: number[]): Promise<CliproxyWriteResult> =>
-    ipcRenderer.invoke('write-cliproxy-auth-files', accountIds),
-  selectCliproxyAuthDir: (): Promise<DirectorySelectionResult> =>
-    ipcRenderer.invoke('select-cliproxy-auth-dir'),
 
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: Partial<AppSettings>): Promise<AppSettings> =>

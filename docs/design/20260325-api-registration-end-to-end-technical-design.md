@@ -225,15 +225,23 @@ interface ApiRegisterArtifacts {
   - `node --test --experimental-strip-types src/services/httpClient.test.ts src/services/fingerprintRuntime.test.ts src/services/kiroApiRegister.test.ts src/services/tempmail.test.ts src/services/kiroRegister.test.ts src/services/targetIntegrations.test.ts src/services/accountFormats.test.ts src/services/storeSchemas.test.ts`
 - 2026-03-25 本地 `claude-api` 探针真实返回：
   - `503 {"error":"无可用账号，请先添加并配置账号"}`
+- 2026-03-25 当前 TUN 出口实测识别为：
+  - `31.223.184.111`, `Tokyo`, `JP`
+- 2026-03-25 `tempmail.lol` 在当前出口下真实返回：
+  - `POST /v2/inbox/create` -> `201`
 - 2026-03-25 纯接口注册在当前环境真实推进到：
   - `POST https://profile.aws.amazon.com/api/send-otp`
   - 返回 `400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}`
+- 2026-03-25 浏览器真实路径在姓名页继续后，同样调用：
+  - `POST https://profile.aws.amazon.com/api/send-otp`
+  - 返回 `400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}`
+- 2026-03-25 已抽样验证多个 `tempmail` 域名（`cloudvxz.com`、`moonairse.com`、`hush2u.com`）均在 `send-otp` 被阻断
 
 ### External Constraints Observed
 - 2026-03-25 当前中国大陆出口环境直接调用 `POST https://api.tempmail.lol/v2/inbox/create` 返回：
   - `403 {"error":"The country you are requesting from (CN) is not allowed...","captcha_required":true}`
-- 因此当前验证阶段改为复用已有邮箱，通过 `TEMPMAIL_REUSE_EMAIL` / `TEMPMAIL_REUSE_TOKEN` 继续推进 AWS 链路
-- 在不使用浏览器的前提下，当前仓库已把可实现的纯接口部分全部落地，但最终注册成功仍受 AWS TES 风控和邮箱供应商地域限制阻塞
+- 2026-03-25 当前 TUN 出口已能绕过 `tempmail` 地域限制，但 AWS TES 对当前环境与邮箱组合仍然拦截
+- 浏览器路径与纯接口路径在同一 `send-otp` 阶段返回相同阻断结果，说明当前主要问题仍是外部风控，而不是 Electron/UI 调用路径
 
 ## 🔒 Security Considerations
 

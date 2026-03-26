@@ -1,4 +1,11 @@
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
+import {
+  buildIpFoxyProxyUrl,
+  listIpFoxyProxies,
+  parseIpFoxyProxySpec,
+  type IpFoxyProxyRecord
+} from './ipFoxy.ts';
+import { createSocks5HttpBridge, type Socks5HttpBridge } from './socks5Bridge.ts';
 
 export type FetchImpl = typeof fetch;
 
@@ -233,17 +240,94 @@ export interface FetchContext {
   close(): Promise<void>;
 }
 
-export function createFetchContext(proxyUrl?: string): FetchContext {
-  const resolvedProxyUrl = resolveProxyUrl(proxyUrl);
+export interface ResolvedManagedProxyTarget {
+  sourceUrl: string;
+  resolvedProxyUrl: string;
+  runtimeProxyUrl: string;
+  close(): Promise<void>;
+}
 
-  if (!resolvedProxyUrl) {
+interface ResolveManagedProxyDependencies {
+  fetchImpl?: FetchImpl;
+  listIpFoxyProxies?: (options: {
+    apiId: string;
+    apiToken: string;
+    fetchImpl?: FetchImpl;
+  }) => Promise<IpFoxyProxyRecord[]>;
+  createSocksBridge?: (proxyUrl: string) => Promise<Socks5HttpBridge>;
+}
+
+function extractProtocol(proxyUrl: string): string {
+  const match = proxyUrl.match(/^([a-z0-9+.-]+):\/\//i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+async function resolveDynamicProxyUrl(
+  proxyUrl: string,
+  dependencies: ResolveManagedProxyDependencies
+): Promise<string> {
+  if (extractProtocol(proxyUrl) !== 'ipfoxy') {
+    return proxyUrl;
+  }
+
+  const credentials = parseIpFoxyProxySpec(proxyUrl);
+  const proxies = await (dependencies.listIpFoxyProxies ?? listIpFoxyProxies)({
+    apiId: credentials.apiId,
+    apiToken: credentials.apiToken,
+    fetchImpl: dependencies.fetchImpl
+  });
+
+  if (proxies.length === 0) {
+    throw new Error('IPFoxy 未返回任何可用代理');
+  }
+
+  return buildIpFoxyProxyUrl(proxies[0]);
+}
+
+export async function resolveManagedProxyTarget(
+  explicitProxyUrl?: string,
+  dependencies: ResolveManagedProxyDependencies = {},
+  environment: ProxyEnvironment = process.env
+): Promise<ResolvedManagedProxyTarget | undefined> {
+  const sourceUrl = resolveProxyUrl(explicitProxyUrl, environment);
+  if (!sourceUrl) {
+    return undefined;
+  }
+
+  const resolvedProxyUrl = await resolveDynamicProxyUrl(sourceUrl, dependencies);
+
+  if (extractProtocol(resolvedProxyUrl) === 'socks5') {
+    const bridge = await (dependencies.createSocksBridge ?? createSocks5HttpBridge)(resolvedProxyUrl);
+    return {
+      sourceUrl,
+      resolvedProxyUrl,
+      runtimeProxyUrl: bridge.proxyUrl,
+      close: bridge.close
+    };
+  }
+
+  return {
+    sourceUrl,
+    resolvedProxyUrl,
+    runtimeProxyUrl: resolvedProxyUrl,
+    close: async () => undefined
+  };
+}
+
+export async function createFetchContext(
+  proxyUrl?: string,
+  dependencies: ResolveManagedProxyDependencies = {}
+): Promise<FetchContext> {
+  const resolvedProxyTarget = await resolveManagedProxyTarget(proxyUrl, dependencies);
+
+  if (!resolvedProxyTarget) {
     return {
       fetchImpl: globalThis.fetch.bind(globalThis),
       close: async () => undefined
     };
   }
 
-  const dispatcher = new ProxyAgent(resolvedProxyUrl);
+  const dispatcher = new ProxyAgent(resolvedProxyTarget.runtimeProxyUrl);
   const fetchImpl: FetchImpl = ((input, init) => {
     const undiciInit = {
       ...(init as unknown as Omit<NonNullable<Parameters<typeof undiciFetch>[1]>, 'dispatcher'>),
@@ -260,6 +344,7 @@ export function createFetchContext(proxyUrl?: string): FetchContext {
     fetchImpl,
     close: async () => {
       await dispatcher.close();
+      await resolvedProxyTarget.close();
     }
   };
 }

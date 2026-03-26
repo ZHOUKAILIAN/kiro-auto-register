@@ -4,6 +4,7 @@
  */
 
 import type { FetchImpl } from './httpClient.ts';
+import { formatErrorDetails } from './errorDetails.ts';
 
 export interface TempmailInbox {
   email: string;
@@ -42,6 +43,7 @@ interface CreateInboxOptions {
   fetchImpl?: FetchImpl;
   maxRetries?: number;
   retryDelayMs?: number;
+  onProgress?: (message: string) => void;
 }
 
 interface GetInboxOptions {
@@ -56,6 +58,23 @@ interface WaitForVerificationCodeOptions {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarizeResponseBody(text: string): string {
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.length > 240 ? `${normalized.slice(0, 240)}...` : normalized;
+}
+
+function parseJsonSafely<T>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -111,8 +130,11 @@ export async function createInbox(options: CreateInboxOptions = {}): Promise<Tem
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const maxRetries = Math.max(0, options.maxRetries ?? 2);
   const retryDelayMs = Math.max(0, options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS);
+  const onProgress = options.onProgress;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    onProgress?.(`Tempmail: 第 ${attempt + 1}/${maxRetries + 1} 次尝试创建邮箱`);
+
     try {
       const response = await fetchImpl(`${BASE_URL}/inbox/create`, {
         method: 'POST',
@@ -122,31 +144,44 @@ export async function createInbox(options: CreateInboxOptions = {}): Promise<Tem
         },
         body: JSON.stringify({})
       });
+      const rawText = await response.text();
 
       if (!response.ok) {
+        const detail = summarizeResponseBody(rawText);
+        onProgress?.(
+          `Tempmail: 创建邮箱响应 ${response.status}${detail ? ` ${detail}` : ''}`
+        );
+
         if (attempt < maxRetries && isRetryableStatus(response.status)) {
+          onProgress?.(`Tempmail: 当前错误可重试，等待 ${retryDelayMs}ms 后继续`);
           await sleep(retryDelayMs);
           continue;
         }
-        throw new Error(`创建邮箱失败: ${response.status}`);
+        throw new Error(`创建邮箱失败: ${response.status}${detail ? ` ${detail}` : ''}`);
       }
 
-      const data = await response.json();
+      const data = parseJsonSafely<{ address?: string; token?: string }>(rawText);
+      if (!data?.address || !data?.token) {
+        throw new Error(`创建邮箱失败: 响应缺少 address/token${rawText ? ` ${summarizeResponseBody(rawText)}` : ''}`);
+      }
+
+      onProgress?.(`Tempmail: 邮箱创建成功 ${data.address}`);
       return {
         email: data.address,
         token: data.token,
         createdAt: Date.now()
       };
     } catch (error) {
+      const errorDetail = formatErrorDetails(error);
+
       if (attempt < maxRetries) {
+        onProgress?.(`Tempmail: 创建邮箱异常，准备重试 ${errorDetail}`);
         await sleep(retryDelayMs);
         continue;
       }
 
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error(String(error));
+      onProgress?.(`Tempmail: 创建邮箱最终失败 ${errorDetail}`);
+      throw new Error(errorDetail);
     }
   }
 
@@ -166,12 +201,14 @@ export async function getInbox(
       'Accept': 'application/json'
     }
   });
+  const rawText = await response.text();
 
   if (!response.ok) {
-    throw new Error(`获取邮件失败: ${response.status}`);
+    const detail = summarizeResponseBody(rawText);
+    throw new Error(`获取邮件失败: ${response.status}${detail ? ` ${detail}` : ''}`);
   }
 
-  const data = await response.json();
+  const data = parseJsonSafely<{ emails?: EmailMessage[] }>(rawText);
 
   if (!data || !data.emails) {
     return [];
@@ -209,18 +246,21 @@ export async function waitForVerificationCode(
   const seenIds = new Set<string>();
   const otpSentAt = options.otpSentAt;
   const pollIntervalMs = Math.max(0, options.pollIntervalMs ?? 3000);
+  let pollCount = 0;
 
   onProgress?.('开始等待验证码...');
 
   while (Date.now() - startTime < timeout) {
+    pollCount += 1;
     try {
       const emails = await getInbox(token, {
         fetchImpl: options.fetchImpl
       });
+      onProgress?.(`Tempmail: 第 ${pollCount} 次轮询，收件箱当前 ${emails.length} 封邮件`);
 
       if (emails.length === 0) {
         onProgress?.(`收件箱为空，继续等待...`);
-        await new Promise(r => setTimeout(r, 3000));
+        await sleep(pollIntervalMs);
         continue;
       }
 
@@ -236,22 +276,32 @@ export async function waitForVerificationCode(
           typeof otpSentAt === 'number' &&
           (!receivedAt || receivedAt <= otpSentAt - OTP_SENT_AT_TOLERANCE_MS)
         ) {
+          onProgress?.(
+            `跳过历史邮件：发件人 ${sender || '-'}，主题 ${msg.subject || '(无主题)'}`
+          );
           continue;
         }
 
         seenIds.add(msgId);
+        onProgress?.(
+          `发现新邮件：发件人 ${sender || '-'}，主题 ${msg.subject || '(无主题)'}`
+        );
 
         // 检查是否是 AWS 邮件
         const isAwsMail = AWS_SENDERS.some(s => sender.includes(s.toLowerCase()));
 
         if (isAwsMail) {
-          onProgress?.(`收到 AWS 邮件，正在提取验证码...`);
+          onProgress?.(
+            `收到 AWS 邮件：发件人 ${sender || '-'}，主题 ${msg.subject || '(无主题)'}，正在提取验证码...`
+          );
 
           const code = extractCode(content);
           if (code) {
             onProgress?.(`找到验证码: ${code}`);
             return code;
           }
+
+          onProgress?.('AWS 邮件已命中，但正文里未提取到 6 位验证码');
         }
       }
 

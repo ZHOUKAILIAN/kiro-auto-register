@@ -9,6 +9,10 @@ function sanitizeEmailForFilename(email: string): string {
   return email.trim().toLowerCase().replace(/[@.]/g, '-');
 }
 
+export function buildExportPayload(accounts: StoredAccount[]): ClaudeApiImportItem[] {
+  return buildClaudeApiImportPayload(accounts);
+}
+
 export function buildClaudeApiImportPayload(accounts: StoredAccount[]): ClaudeApiImportItem[] {
   return accounts
     .filter((account) => account.refreshToken.trim() !== '')

@@ -9,7 +9,7 @@ import {
   probeClaudeApiChat,
   writeAccountsToCliproxy
 } from './targetIntegrations.ts';
-import type { AppSettings, StoredAccount } from '../shared/contracts.ts';
+import type { StoredAccount, TargetIntegrationSettings } from '../shared/contracts.ts';
 
 const sampleAccount: StoredAccount = {
   id: 101,
@@ -32,14 +32,10 @@ const sampleAccount: StoredAccount = {
   updatedAt: 1767000000000
 };
 
-const sampleSettings: AppSettings = {
-  proxyUrl: '',
-  registerCount: 1,
+const sampleSettings: TargetIntegrationSettings = {
   claudeApiBaseUrl: 'http://127.0.0.1:62311',
   claudeApiAdminKey: 'admin',
-  cliproxyAuthDir: '',
-  autoImportClaude: false,
-  autoWriteCliproxy: false
+  cliproxyAuthDir: ''
 };
 
 test('importAccountsToClaudeApi returns a failure result when claude-api is unreachable', async () => {

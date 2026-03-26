@@ -12,15 +12,24 @@
 
 ## 当前问题
 
-### 1. tempmail.lol 地域限制
-- 当前中国大陆出口环境直接调用 `POST https://api.tempmail.lol/v2/inbox/create`
+### 1. tempmail.lol 地域限制已被当前出口绕过
+- 中国大陆出口环境直接调用 `POST https://api.tempmail.lol/v2/inbox/create`
 - 实测返回：`403 {"error":"The country you are requesting from (CN) is not allowed...","captcha_required":true}`
-- 当前可行绕过方式：通过 `TEMPMAIL_REUSE_EMAIL` / `TEMPMAIL_REUSE_TOKEN` 复用已有邮箱继续调试
+- 2026-03-25 切换当前 TUN 后再次实测：
+  - `curl https://ipinfo.io/json` -> `31.223.184.111`, `Tokyo`, `JP`
+  - `POST https://api.tempmail.lol/v2/inbox/create` -> `201`
+- 因此当前阶段不再依赖 `TEMPMAIL_REUSE_EMAIL` / `TEMPMAIL_REUSE_TOKEN` 才能推进链路
 
 ### 2. AWS TES 风控拦截
 - 纯 API 注册目前可稳定推进到 `POST https://profile.aws.amazon.com/api/send-otp`
-- 实测返回：`400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}`
-- 这说明当前阻塞点不在 Electron、UI、IPC 或导入链路，而在外部平台风控
+- 2026-03-25 在浏览器真实路径下，同样会在姓名页继续后触发 `POST https://profile.aws.amazon.com/api/send-otp`
+- 两条路径实测都返回：`400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}`
+- 另外已抽样验证多个 `tempmail` 域名：
+  - `ei.cloudvxz.com`
+  - `5o.moonairse.com`
+  - `os.hush2u.com`
+- 三次请求都在 `send-otp` 被 TES 拦截
+- 这说明当前阻塞点不在 Electron、UI、IPC 或 `tempmail.lol` 创建邮箱，而在 AWS TES 风控与当前邮箱/环境画像组合
 
 ### 3. claude-api 当前没有可用账号
 - 本地 `claude-api` 地址：`http://127.0.0.1:62311`
@@ -32,8 +41,8 @@
 
 要真正完成“新注册账号 -> 导入 claude-api -> 成功聊天请求”这条链路，还需要下面至少一项：
 
-- 可用的非 CN 代理或海外运行环境，用来通过 `tempmail.lol` 地域限制
 - 能通过 AWS TES 风控的网络环境或请求画像
+- 一个当前未被拦截的邮箱来源，用来替代现有 `tempmail` 域名池
 - 一个已可用的 Builder ID / Kiro 账号，用来单独验证导入和 `claude-api` 请求链路
 
 当前仓库内部已经没有浏览器注册依赖，剩余问题主要是外部服务限制，不是界面点击路径问题。
@@ -43,7 +52,7 @@
 ### 安装
 
 ```bash
-cd /Users/zhoukailian/Desktop/mySelf/kiro-auto-register
+cd /Users/zhoukailian/Desktop/mySelf/kiro-manager
 npm install --legacy-peer-deps
 ```
 

@@ -3,11 +3,14 @@ import type { AppSettings, StoredAccount } from '../shared/contracts.ts';
 export const DEFAULT_SETTINGS: AppSettings = {
   proxyUrl: '',
   registerCount: 1,
-  claudeApiBaseUrl: 'http://127.0.0.1:62311',
-  claudeApiAdminKey: 'admin',
-  cliproxyAuthDir: '',
-  autoImportClaude: false,
-  autoWriteCliproxy: false
+  registrationEmailMode: 'tempmail',
+  customEmailAddress: '',
+  otpMode: 'tempmail',
+  customMailboxHost: '',
+  customMailboxPort: 993,
+  customMailboxUsername: '',
+  customMailboxPassword: '',
+  customMailboxTls: true
 };
 
 function readString(value: unknown, fallback: string = ''): string {
@@ -33,11 +36,26 @@ export function normalizeSettings(input: unknown): AppSettings {
   return {
     proxyUrl: readString(settings.proxyUrl, DEFAULT_SETTINGS.proxyUrl),
     registerCount: readPositiveInteger(settings.registerCount, DEFAULT_SETTINGS.registerCount),
-    claudeApiBaseUrl: readString(settings.claudeApiBaseUrl, DEFAULT_SETTINGS.claudeApiBaseUrl),
-    claudeApiAdminKey: readString(settings.claudeApiAdminKey, DEFAULT_SETTINGS.claudeApiAdminKey),
-    cliproxyAuthDir: readString(settings.cliproxyAuthDir, DEFAULT_SETTINGS.cliproxyAuthDir),
-    autoImportClaude: readBoolean(settings.autoImportClaude, DEFAULT_SETTINGS.autoImportClaude),
-    autoWriteCliproxy: readBoolean(settings.autoWriteCliproxy, DEFAULT_SETTINGS.autoWriteCliproxy)
+    registrationEmailMode: readString(
+      settings.registrationEmailMode,
+      DEFAULT_SETTINGS.registrationEmailMode
+    ) as AppSettings['registrationEmailMode'],
+    customEmailAddress: readString(settings.customEmailAddress, DEFAULT_SETTINGS.customEmailAddress),
+    otpMode: readString(settings.otpMode, DEFAULT_SETTINGS.otpMode) as AppSettings['otpMode'],
+    customMailboxHost: readString(settings.customMailboxHost, DEFAULT_SETTINGS.customMailboxHost),
+    customMailboxPort: readPositiveInteger(
+      settings.customMailboxPort,
+      DEFAULT_SETTINGS.customMailboxPort
+    ),
+    customMailboxUsername: readString(
+      settings.customMailboxUsername,
+      DEFAULT_SETTINGS.customMailboxUsername
+    ),
+    customMailboxPassword: readString(
+      settings.customMailboxPassword,
+      DEFAULT_SETTINGS.customMailboxPassword
+    ),
+    customMailboxTls: readBoolean(settings.customMailboxTls, DEFAULT_SETTINGS.customMailboxTls)
   };
 }
 

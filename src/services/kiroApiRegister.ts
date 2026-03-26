@@ -4,6 +4,7 @@ import {
   buildBrowserData,
   generateFingerprint
 } from './fingerprintRuntime.ts';
+import { formatErrorDetails } from './errorDetails.ts';
 import {
   CookieJar,
   createFetchContext,
@@ -14,8 +15,9 @@ import {
   waitForVerificationCode,
   type TempmailInbox
 } from './tempmail.ts';
+import type { OtpMode, RegistrationEmailMode } from '../shared/contracts.ts';
 
-interface RegisterResult {
+export interface RegisterResult {
   success: boolean;
   email?: string;
   ssoToken?: string;
@@ -24,6 +26,39 @@ interface RegisterResult {
   refreshToken?: string;
   name?: string;
   error?: string;
+  stage?: string;
+}
+
+interface RegistrationInbox {
+  email: string;
+  token?: string;
+  createdAt: number;
+  source: RegistrationEmailMode;
+}
+
+export interface OtpRequest {
+  email: string;
+  source: 'tempmail' | 'manual';
+  otpSentAt: number;
+  tempmailToken?: string;
+}
+
+export interface AutoRegisterFlowOptions {
+  onProgress?: (message: string) => void;
+  proxyUrl?: string;
+  registrationEmailMode?: RegistrationEmailMode;
+  customEmailAddress?: string;
+  otpMode?: OtpMode;
+  requestOtp?: (request: OtpRequest) => Promise<string>;
+}
+
+interface ResolvedAutoRegisterFlowOptions {
+  onProgress?: (message: string) => void;
+  proxyUrl?: string;
+  registrationEmailMode: RegistrationEmailMode;
+  customEmailAddress: string;
+  otpMode: OtpMode;
+  requestOtp?: (request: OtpRequest) => Promise<string>;
 }
 
 interface RequestResult {
@@ -95,6 +130,20 @@ function logProgress(
   message: string
 ): void {
   onProgress?.(message);
+}
+
+function formatStageName(stage: string): string {
+  const mapping: Record<string, string> = {
+    'create-inbox': '创建邮箱',
+    'prepare-profile-workflow': '初始化 AWS 注册',
+    'start-profile-signup': '启动 profile 注册',
+    'send-otp': '发送邮箱验证码',
+    'wait-otp': '等待验证码',
+    'create-identity': '创建身份',
+    'resolve-sso-token': '回填 SSO Token'
+  };
+
+  return mapping[stage] || stage;
 }
 
 function generateRandomName(): string {
@@ -272,7 +321,7 @@ function getOptionalString(payload: Record<string, unknown>, key: string): strin
 
 function createExistingInboxFromEnvironment(
   environment: ExistingInboxEnvironment = process.env
-): TempmailInbox | null {
+): RegistrationInbox | null {
   const email = environment.TEMPMAIL_REUSE_EMAIL?.trim();
   const token = environment.TEMPMAIL_REUSE_TOKEN?.trim();
 
@@ -283,17 +332,92 @@ function createExistingInboxFromEnvironment(
   return {
     email,
     token,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    source: 'tempmail'
   };
 }
 
-async function resolveInbox(fetchImpl: FetchImpl): Promise<TempmailInbox> {
+function normalizeFlowOptions(options: AutoRegisterFlowOptions = {}): ResolvedAutoRegisterFlowOptions {
+  return {
+    onProgress: options.onProgress,
+    proxyUrl: options.proxyUrl,
+    registrationEmailMode: options.registrationEmailMode ?? 'tempmail',
+    customEmailAddress: options.customEmailAddress?.trim() ?? '',
+    otpMode: options.otpMode ?? 'tempmail',
+    requestOtp: options.requestOtp
+  };
+}
+
+function validateCustomEmailAddress(email: string): string {
+  const normalized = email.trim();
+  if (!normalized) {
+    throw new Error('自定义邮箱地址不能为空');
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw new Error('自定义邮箱地址格式无效');
+  }
+
+  return normalized;
+}
+
+async function resolveInbox(
+  fetchImpl: FetchImpl,
+  options: ResolvedAutoRegisterFlowOptions
+): Promise<RegistrationInbox> {
+  if (options.registrationEmailMode === 'custom') {
+    return {
+      email: validateCustomEmailAddress(options.customEmailAddress),
+      createdAt: Date.now(),
+      source: 'custom'
+    };
+  }
+
   const existingInbox = createExistingInboxFromEnvironment();
   if (existingInbox) {
     return existingInbox;
   }
 
-  return createInbox({
+  const inbox = await createInbox({
+    fetchImpl,
+    onProgress: options.onProgress
+  });
+
+  return {
+    ...inbox,
+    source: 'tempmail'
+  };
+}
+
+async function resolveOtpCode(
+  inbox: RegistrationInbox,
+  otpSentAt: number,
+  options: ResolvedAutoRegisterFlowOptions,
+  fetchImpl: FetchImpl
+): Promise<string | null> {
+  if (options.otpMode === 'mailbox') {
+    throw new Error('自带邮箱自动收码将在后续版本提供，请先使用手动 OTP');
+  }
+
+  if (options.otpMode === 'manual' || inbox.source === 'custom') {
+    if (!options.requestOtp) {
+      throw new Error('当前 OTP 模式需要界面提供验证码输入能力');
+    }
+
+    return options.requestOtp({
+      email: inbox.email,
+      source: 'manual',
+      otpSentAt,
+      tempmailToken: inbox.token
+    });
+  }
+
+  if (!inbox.token) {
+    throw new Error('当前 OTP 模式需要临时邮箱 token，请改用手动 OTP');
+  }
+
+  return waitForVerificationCode(inbox.token, 120_000, options.onProgress, {
+    otpSentAt,
     fetchImpl
   });
 }
@@ -635,33 +759,38 @@ function findSsoToken(cookieJar: CookieJar): string | undefined {
 }
 
 export async function autoRegisterViaApi(
-  onProgress?: (message: string) => void,
-  proxyUrl?: string
+  options: AutoRegisterFlowOptions = {}
 ): Promise<RegisterResult> {
-  const fetchContext = createFetchContext(proxyUrl);
+  const flowOptions = normalizeFlowOptions(options);
+  const fetchContext = await createFetchContext(flowOptions.proxyUrl);
+  let currentStage = 'create-inbox';
 
   try {
     const session = createSession(fetchContext.fetchImpl);
-    logProgress(onProgress, '========== 创建临时邮箱 ==========');
-    const inbox = await resolveInbox(fetchContext.fetchImpl);
-    logProgress(onProgress, `邮箱地址: ${inbox.email}`);
+    const inboxLabel = flowOptions.registrationEmailMode === 'custom' ? '使用自定义邮箱' : '创建临时邮箱';
+    logProgress(flowOptions.onProgress, `========== ${inboxLabel} ==========`);
+    const inbox = await resolveInbox(fetchContext.fetchImpl, flowOptions);
+    logProgress(flowOptions.onProgress, `邮箱地址: ${inbox.email}`);
 
     const fullName = generateRandomName();
 
-    logProgress(onProgress, '========== 初始化 AWS 纯接口注册 ==========');
+    currentStage = 'prepare-profile-workflow';
+    logProgress(flowOptions.onProgress, '========== 初始化 AWS 纯接口注册 ==========');
     const {
       profileRedirectUrl,
       profileWorkflowId
     } = await prepareProfileWorkflow(session, inbox.email);
-    logProgress(onProgress, `profile workflowID: ${profileWorkflowId}`);
+    logProgress(flowOptions.onProgress, `profile workflowID: ${profileWorkflowId}`);
 
-    logProgress(onProgress, '========== 启动 profile 注册 ==========');
+    currentStage = 'start-profile-signup';
+    logProgress(flowOptions.onProgress, '========== 启动 profile 注册 ==========');
     const {
       profileWorkflowState,
       profileUbid
     } = await startProfileSignup(session, profileRedirectUrl, profileWorkflowId);
 
-    logProgress(onProgress, '========== 发送邮箱验证码 ==========');
+    currentStage = 'send-otp';
+    logProgress(flowOptions.onProgress, '========== 发送邮箱验证码 ==========');
     const otpSentAt = Date.now();
     await sendProfileOtp(
       session,
@@ -671,17 +800,19 @@ export async function autoRegisterViaApi(
       profileUbid
     );
 
-    const otp = await waitForVerificationCode(inbox.token, 120_000, onProgress, {
-      otpSentAt,
-      fetchImpl: fetchContext.fetchImpl
-    });
+    currentStage = 'wait-otp';
+    if (flowOptions.otpMode === 'manual' || inbox.source === 'custom') {
+      logProgress(flowOptions.onProgress, '========== 等待手动输入验证码 ==========');
+    }
+    const otp = await resolveOtpCode(inbox, otpSentAt, flowOptions, fetchContext.fetchImpl);
 
     if (!otp) {
       throw new Error('等待邮箱验证码超时');
     }
 
-    logProgress(onProgress, `已获取验证码: ${otp}`);
-    logProgress(onProgress, '========== 创建 Builder ID 身份 ==========');
+    logProgress(flowOptions.onProgress, '已获取验证码，准备继续校验');
+    currentStage = 'create-identity';
+    logProgress(flowOptions.onProgress, '========== 创建 Builder ID 身份 ==========');
     const identityPayload = await createProfileIdentity(session, {
       email: inbox.email,
       fullName,
@@ -709,22 +840,24 @@ export async function autoRegisterViaApi(
     });
 
     logProgress(
-      onProgress,
+      flowOptions.onProgress,
       `已拿到 registrationCode，准备继续回填注册链路 (${redeemRequest.method} ${redeemRequest.action})`
     );
 
+    currentStage = 'resolve-sso-token';
     const ssoToken = findSsoToken(session.cookieJar);
     if (!ssoToken) {
       return {
         success: false,
         email: inbox.email,
         name: fullName,
+        stage: currentStage,
         error:
           '已完成邮箱验证并创建身份，但尚未打通最终 x-amz-sso_authn 回填步骤。当前产物已包含 registrationCode/signInState，可继续调试后续密码设置链路。'
       };
     }
 
-    logProgress(onProgress, `已获取 SSO Token: ${maskToken(ssoToken)}`);
+    logProgress(flowOptions.onProgress, `已获取 SSO Token: ${maskToken(ssoToken)}`);
     return {
       success: true,
       email: inbox.email,
@@ -732,9 +865,15 @@ export async function autoRegisterViaApi(
       ssoToken
     };
   } catch (error) {
+    const errorDetail = formatErrorDetails(error);
+    logProgress(
+      flowOptions.onProgress,
+      `⚠ 阶段 ${formatStageName(currentStage)} 失败: ${errorDetail}`
+    );
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error)
+      stage: currentStage,
+      error: errorDetail
     };
   } finally {
     await fetchContext.close();

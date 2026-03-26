@@ -3,7 +3,10 @@
  * 对外兼容入口，主流程已切换为纯 HTTP 实现
  */
 
-import { autoRegisterViaApi } from './kiroApiRegister.ts';
+import {
+  autoRegisterViaApi,
+  type AutoRegisterFlowOptions
+} from './kiroApiRegister.ts';
 
 export interface RegisterResult {
   success: boolean;
@@ -14,14 +17,12 @@ export interface RegisterResult {
   refreshToken?: string;
   name?: string;
   error?: string;
+  stage?: string;
 }
 
 /**
  * AWS Kiro 自动注册
  */
-export async function autoRegister(
-  onProgress?: (message: string) => void,
-  proxyUrl?: string
-): Promise<RegisterResult> {
-  return autoRegisterViaApi(onProgress, proxyUrl);
+export async function autoRegister(options: AutoRegisterFlowOptions = {}): Promise<RegisterResult> {
+  return autoRegisterViaApi(options);
 }

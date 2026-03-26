@@ -3,10 +3,10 @@
 import type {
   AppSettings,
   BatchRegisterResult,
-  ClaudeChatProbeResult,
-  ClaudeImportResult,
-  CliproxyWriteResult,
+  ManualOtpSubmitResult,
+  RegisterDiagnostics,
   RegisterOptions,
+  RegisterRuntimeState,
   StoredAccount
 } from '../../shared/contracts.ts';
 
@@ -19,13 +19,14 @@ declare global {
       deleteAccount: (id: number) => Promise<StoredAccount[]>;
       deleteAccounts: (ids: number[]) => Promise<StoredAccount[]>;
       startRegister: (options: Partial<RegisterOptions>) => Promise<BatchRegisterResult>;
+      getRegisterRuntimeState: () => Promise<RegisterRuntimeState>;
+      submitRegisterOtp: (taskId: string, otp: string) => Promise<ManualOtpSubmitResult>;
+      runRegisterDiagnostics: (proxyUrl?: string) => Promise<RegisterDiagnostics>;
       onRegisterProgress: (callback: (message: string) => void) => void;
       removeRegisterProgressListener: () => void;
+      onRegisterRuntimeState: (callback: (state: RegisterRuntimeState) => void) => void;
+      removeRegisterRuntimeStateListener: () => void;
       exportAccounts: (accountIds?: number[]) => Promise<string>;
-      importToClaudeApi: (accountIds?: number[]) => Promise<ClaudeImportResult>;
-      probeClaudeApiChat: () => Promise<ClaudeChatProbeResult>;
-      writeCliproxyAuthFiles: (accountIds?: number[]) => Promise<CliproxyWriteResult>;
-      selectCliproxyAuthDir: () => Promise<{ canceled: boolean; path?: string }>;
       getSettings: () => Promise<AppSettings>;
       saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
     };

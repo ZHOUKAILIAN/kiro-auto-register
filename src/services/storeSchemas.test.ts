@@ -11,15 +11,41 @@ test('normalizeSettings backfills defaults and preserves known values', () => {
   const normalized = normalizeSettings({
     proxyUrl: 'http://127.0.0.1:7890',
     registerCount: 3,
-    autoImportClaude: true
+    registrationEmailMode: 'custom',
+    customEmailAddress: 'owner@example.com',
+    otpMode: 'manual',
+    customMailboxHost: 'imap.example.com',
+    customMailboxPort: 995,
+    customMailboxUsername: 'owner',
+    customMailboxPassword: 'secret',
+    customMailboxTls: false
   });
 
   assert.deepEqual(normalized, {
     ...DEFAULT_SETTINGS,
     proxyUrl: 'http://127.0.0.1:7890',
     registerCount: 3,
-    autoImportClaude: true
+    registrationEmailMode: 'custom',
+    customEmailAddress: 'owner@example.com',
+    otpMode: 'manual',
+    customMailboxHost: 'imap.example.com',
+    customMailboxPort: 995,
+    customMailboxUsername: 'owner',
+    customMailboxPassword: 'secret',
+    customMailboxTls: false
   });
+});
+
+test('normalizeSettings safely ignores legacy downstream integration fields', () => {
+  const normalized = normalizeSettings({
+    claudeApiBaseUrl: 'http://127.0.0.1:62311',
+    claudeApiAdminKey: 'admin',
+    cliproxyAuthDir: '/tmp/cliproxy-auth',
+    autoImportClaude: true,
+    autoWriteCliproxy: true
+  });
+
+  assert.deepEqual(normalized, DEFAULT_SETTINGS);
 });
 
 test('normalizeAccountRecord upgrades legacy sso-only accounts into the new shape', () => {

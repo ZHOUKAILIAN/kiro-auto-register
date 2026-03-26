@@ -1,4 +1,6 @@
 export type AccountAuthMethod = 'builder-id' | 'idc';
+export type RegistrationEmailMode = 'tempmail' | 'custom';
+export type OtpMode = 'tempmail' | 'manual' | 'mailbox';
 
 export interface StoredAccount {
   id: number;
@@ -24,18 +26,75 @@ export interface StoredAccount {
 export interface AppSettings {
   proxyUrl: string;
   registerCount: number;
-  claudeApiBaseUrl: string;
-  claudeApiAdminKey: string;
-  cliproxyAuthDir: string;
-  autoImportClaude: boolean;
-  autoWriteCliproxy: boolean;
+  registrationEmailMode: RegistrationEmailMode;
+  customEmailAddress: string;
+  otpMode: OtpMode;
+  customMailboxHost: string;
+  customMailboxPort: number;
+  customMailboxUsername: string;
+  customMailboxPassword: string;
+  customMailboxTls: boolean;
 }
 
 export interface RegisterOptions {
   count: number;
   proxyUrl?: string;
-  autoImportClaude?: boolean;
-  autoWriteCliproxy?: boolean;
+  registrationEmailMode?: RegistrationEmailMode;
+  customEmailAddress?: string;
+  otpMode?: OtpMode;
+}
+
+export interface TargetIntegrationSettings {
+  claudeApiBaseUrl: string;
+  claudeApiAdminKey: string;
+  cliproxyAuthDir: string;
+}
+
+export interface PendingOtpState {
+  taskId: string;
+  registerIndex: number;
+  email: string;
+  requestedAt: number;
+  source: 'manual';
+}
+
+export interface RegistrationFailureSummary {
+  stage: string;
+  message: string;
+  timestamp: number;
+}
+
+export interface RegisterDiagnostics {
+  executedAt: number;
+  proxyUrl?: string;
+  egress?: {
+    ip?: string;
+    city?: string;
+    region?: string;
+    country?: string;
+    org?: string;
+  };
+  tempmail: {
+    success: boolean;
+    message: string;
+    email?: string;
+  };
+  aws?: {
+    stage: string;
+    message: string;
+  };
+}
+
+export interface RegisterRuntimeState {
+  isRegistering: boolean;
+  pendingOtp?: PendingOtpState;
+  latestDiagnostics?: RegisterDiagnostics;
+  lastFailure?: RegistrationFailureSummary;
+}
+
+export interface ManualOtpSubmitResult {
+  success: boolean;
+  message: string;
 }
 
 export interface OperationIssue {

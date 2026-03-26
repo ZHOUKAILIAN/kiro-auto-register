@@ -2,12 +2,14 @@
  * Electron 主进程
  */
 
-import { app, shell, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
+import { app, shell, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import Store from 'electron-store';
-import { autoRegister, type RegisterResult } from '../services/kiroRegister';
-import { buildClaudeApiImportPayload } from '../services/accountFormats.ts';
+import { autoRegister, type RegisterResult } from '../services/kiroRegister.ts';
+import { buildExportPayload } from '../services/accountFormats.ts';
+import { runRegisterDiagnostics } from '../services/registerDiagnostics.ts';
+import { RegisterRuntimeController } from '../services/registerRuntime.ts';
 import {
   exchangeSsoToken,
   type CredentialExchangeResult
@@ -17,18 +19,14 @@ import {
   normalizeAccountRecord,
   normalizeSettings
 } from '../services/storeSchemas.ts';
-import {
-  importAccountsToClaudeApi,
-  probeClaudeApiChat,
-  writeAccountsToCliproxy
-} from '../services/targetIntegrations.ts';
+import { normalizeOptionalProxyUrl } from '../shared/registerDiagnosticsUi.ts';
 import type {
   AppSettings,
   BatchRegisterResult,
-  ClaudeChatProbeResult,
-  ClaudeImportResult,
-  CliproxyWriteResult,
+  ManualOtpSubmitResult,
+  RegisterDiagnostics,
   RegisterOptions,
+  RegisterRuntimeState,
   RegisterTaskResult,
   StoredAccount
 } from '../shared/contracts.ts';
@@ -51,9 +49,22 @@ const store = new Store<StoreSchema>({
 }) as unknown as TypedStore;
 
 let mainWindow: BrowserWindow | null = null;
+const registerRuntime = new RegisterRuntimeController();
+
+function resolvePreloadPath(): string {
+  if (typeof __dirname === 'string') {
+    return join(__dirname, '../preload/index.js');
+  }
+
+  return join(process.cwd(), 'out/preload/index.js');
+}
 
 function emitProgress(message: string): void {
   mainWindow?.webContents.send('register-progress', message);
+}
+
+function emitRegisterRuntimeState(): void {
+  mainWindow?.webContents.send('register-runtime-state', registerRuntime.getState());
 }
 
 function createWindow(): void {
@@ -65,7 +76,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: resolvePreloadPath(),
       sandbox: false,
       contextIsolation: true
     }
@@ -161,77 +172,81 @@ function createStoredAccount(
   });
 }
 
-async function maybeImportAfterRegister(
-  account: StoredAccount,
-  options: RegisterOptions
-): Promise<string[]> {
-  const messages: string[] = [];
-  const settings = getSettings();
-
-  if (options.autoImportClaude) {
-    const result = await importAccountsToClaudeApi([account], settings);
-    messages.push(result.message);
-    emitProgress(result.success ? `✓ ${result.message}` : `⚠ ${result.message}`);
-
-    const probeResult = await probeClaudeApiChat(settings);
-    messages.push(probeResult.message);
-    emitProgress(probeResult.success ? `✓ ${probeResult.message}` : `⚠ ${probeResult.message}`);
-  }
-
-  if (options.autoWriteCliproxy) {
-    const result = await writeAccountsToCliproxy([account], settings.cliproxyAuthDir);
-    messages.push(result.message);
-    emitProgress(result.success ? `✓ ${result.message}` : `⚠ ${result.message}`);
-  }
-
-  return messages;
-}
-
 async function runRegisterWorkflow(options: RegisterOptions): Promise<BatchRegisterResult> {
   const total = Math.max(1, Math.floor(options.count || 1));
   const results: RegisterTaskResult[] = [];
   let savedAccounts = getAccounts();
 
-  for (let index = 0; index < total; index += 1) {
-    emitProgress(`========== 注册任务 ${index + 1}/${total} ==========`);
-    const registerResult = await autoRegister(emitProgress, options.proxyUrl);
+  registerRuntime.setRegistering(true);
+  emitRegisterRuntimeState();
 
-    if (!registerResult.success || !registerResult.ssoToken) {
+  try {
+    for (let index = 0; index < total; index += 1) {
+      emitProgress(`========== 注册任务 ${index + 1}/${total} ==========`);
+      const registerResult = await autoRegister({
+        onProgress: emitProgress,
+        proxyUrl: options.proxyUrl,
+        registrationEmailMode: options.registrationEmailMode,
+        customEmailAddress: options.customEmailAddress,
+        otpMode: options.otpMode,
+        requestOtp: async ({ email }) => {
+          emitProgress(`请输入 ${email} 的 6 位验证码以继续当前注册任务`);
+          const otpPromise = registerRuntime.requestManualOtp({
+            registerIndex: index + 1,
+            email
+          });
+          emitRegisterRuntimeState();
+          return otpPromise;
+        }
+      });
+
+      if (!registerResult.success || !registerResult.ssoToken) {
+        const failureMessage = registerResult.error || '注册失败';
+        const stageLabel = registerResult.stage ? `阶段 ${registerResult.stage}` : '注册阶段';
+        registerRuntime.recordFailure({
+          stage: registerResult.stage || 'register',
+          message: failureMessage,
+          timestamp: Date.now()
+        });
+        emitRegisterRuntimeState();
+        results.push({
+          index: index + 1,
+          success: false,
+          message: `${stageLabel} 失败: ${failureMessage}`
+        });
+        continue;
+      }
+
+      registerRuntime.clearFailure();
+      emitRegisterRuntimeState();
+
+      emitProgress('========== 开始兑换 Kiro 凭证 ==========');
+      const exchangeResult = await exchangeSsoToken(registerResult.ssoToken, 'us-east-1', emitProgress);
+      const account = createStoredAccount(registerResult, exchangeResult.success ? exchangeResult : undefined);
+      savedAccounts = saveAccounts([account, ...savedAccounts]);
+      const message = exchangeResult.success
+        ? '注册成功，完整凭证已保存'
+        : `注册成功，但凭证兑换失败: ${exchangeResult.error || 'unknown_error'}`;
+
       results.push({
         index: index + 1,
-        success: false,
-        message: registerResult.error || '注册失败'
+        success: true,
+        account,
+        message
       });
-      continue;
     }
 
-    emitProgress('========== 开始兑换 Kiro 凭证 ==========');
-    const exchangeResult = await exchangeSsoToken(registerResult.ssoToken, 'us-east-1', emitProgress);
-    const account = createStoredAccount(registerResult, exchangeResult.success ? exchangeResult : undefined);
-    savedAccounts = saveAccounts([account, ...savedAccounts]);
-
-    const downstreamMessages = await maybeImportAfterRegister(account, options);
-    const message = exchangeResult.success
-      ? '注册成功，完整凭证已保存'
-      : `注册成功，但凭证兑换失败: ${exchangeResult.error || 'unknown_error'}`;
-
-    results.push({
-      index: index + 1,
-      success: true,
-      account,
-      message:
-        downstreamMessages.length > 0
-          ? `${message}；${downstreamMessages.join('；')}`
-          : message
-    });
+    return {
+      total,
+      successCount: results.filter((result) => result.success).length,
+      failureCount: results.filter((result) => !result.success).length,
+      results
+    };
+  } finally {
+    registerRuntime.setRegistering(false);
+    registerRuntime.clearPendingOtp('注册任务已结束');
+    emitRegisterRuntimeState();
   }
-
-  return {
-    total,
-    successCount: results.filter((result) => result.success).length,
-    failureCount: results.filter((result) => !result.success).length,
-    results
-  };
 }
 
 function setupIPCHandlers(): void {
@@ -262,43 +277,38 @@ function setupIPCHandlers(): void {
     return runRegisterWorkflow({
       count: options?.count ?? settings.registerCount,
       proxyUrl: options?.proxyUrl || settings.proxyUrl || undefined,
-      autoImportClaude: options?.autoImportClaude ?? settings.autoImportClaude,
-      autoWriteCliproxy: options?.autoWriteCliproxy ?? settings.autoWriteCliproxy
+      registrationEmailMode: options?.registrationEmailMode ?? settings.registrationEmailMode,
+      customEmailAddress: options?.customEmailAddress ?? settings.customEmailAddress,
+      otpMode: options?.otpMode ?? settings.otpMode
     });
   });
 
-  ipcMain.handle('export-accounts', async (_event, accountIds?: number[]): Promise<string> => {
-    return JSON.stringify(buildClaudeApiImportPayload(selectAccounts(accountIds)), null, 2);
+  ipcMain.handle('get-register-runtime-state', async (): Promise<RegisterRuntimeState> => {
+    return registerRuntime.getState();
   });
 
-  ipcMain.handle('import-to-claude-api', async (_event, accountIds?: number[]): Promise<ClaudeImportResult> => {
-    return importAccountsToClaudeApi(selectAccounts(accountIds), getSettings());
-  });
-
-  ipcMain.handle('probe-claude-api-chat', async (): Promise<ClaudeChatProbeResult> => {
-    return probeClaudeApiChat(getSettings());
-  });
-
-  ipcMain.handle('write-cliproxy-auth-files', async (_event, accountIds?: number[]): Promise<CliproxyWriteResult> => {
-    return writeAccountsToCliproxy(selectAccounts(accountIds), getSettings().cliproxyAuthDir);
-  });
-
-  ipcMain.handle('select-cliproxy-auth-dir', async () => {
-    const options: OpenDialogOptions = {
-      properties: ['openDirectory', 'createDirectory']
-    };
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options);
-
-    if (result.canceled || result.filePaths.length === 0) {
-      return { canceled: true };
+  ipcMain.handle(
+    'submit-register-otp',
+    async (_event, taskId: string, otp: string): Promise<ManualOtpSubmitResult> => {
+      const result = registerRuntime.submitManualOtp(taskId, otp);
+      emitRegisterRuntimeState();
+      emitProgress(result.success ? '✓ 已收到手动验证码，继续注册流程' : `⚠ ${result.message}`);
+      return result;
     }
+  );
 
-    return {
-      canceled: false,
-      path: result.filePaths[0]
-    };
+  ipcMain.handle('run-register-diagnostics', async (_event, proxyUrl?: string): Promise<RegisterDiagnostics> => {
+    const diagnostics = await runRegisterDiagnostics({
+      proxyUrl: normalizeOptionalProxyUrl(proxyUrl),
+      lastFailure: registerRuntime.getState().lastFailure
+    });
+    registerRuntime.setDiagnostics(diagnostics);
+    emitRegisterRuntimeState();
+    return diagnostics;
+  });
+
+  ipcMain.handle('export-accounts', async (_event, accountIds?: number[]): Promise<string> => {
+    return JSON.stringify(buildExportPayload(selectAccounts(accountIds)), null, 2);
   });
 
   ipcMain.handle('get-settings', async (): Promise<AppSettings> => {

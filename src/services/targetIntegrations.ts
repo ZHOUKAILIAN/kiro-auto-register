@@ -8,12 +8,12 @@ import {
   generateCliproxyAuthFilename
 } from './accountFormats.ts';
 import type {
-  AppSettings,
   ClaudeChatProbeResult,
   ClaudeImportResult,
   CliproxyWriteResult,
   OperationIssue,
-  StoredAccount
+  StoredAccount,
+  TargetIntegrationSettings
 } from '../shared/contracts.ts';
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -92,7 +92,7 @@ function parseClaudeImportResult(
 
 export async function importAccountsToClaudeApi(
   accounts: StoredAccount[],
-  settings: AppSettings
+  settings: TargetIntegrationSettings
 ): Promise<ClaudeImportResult> {
   const baseUrl = normalizeBaseUrl(settings.claudeApiBaseUrl);
   const adminKey = settings.claudeApiAdminKey.trim();
@@ -236,7 +236,7 @@ export async function importAccountsToClaudeApi(
 }
 
 export async function probeClaudeApiChat(
-  settings: AppSettings
+  settings: TargetIntegrationSettings
 ): Promise<ClaudeChatProbeResult> {
   const baseUrl = normalizeBaseUrl(settings.claudeApiBaseUrl);
   const adminKey = settings.claudeApiAdminKey.trim();

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildExportPayload,
   buildClaudeApiImportPayload,
   buildClaudeApiDirectImportPayload,
   buildCliproxyAuthRecord,
@@ -44,6 +45,12 @@ test('buildClaudeApiImportPayload maps builder id credentials into import-by-tok
       region: 'us-east-1'
     }
   ]);
+});
+
+test('buildExportPayload keeps the export contract while using neutral application naming', () => {
+  const payload = buildExportPayload([sampleAccount]);
+
+  assert.deepEqual(payload, buildClaudeApiImportPayload([sampleAccount]));
 });
 
 test('buildClaudeApiDirectImportPayload maps stored accounts into /v2/accounts/import payload', () => {

@@ -1,7 +1,18 @@
 import { startTransition, useEffect, useState } from 'react';
 
 import { DEFAULT_SETTINGS } from '../../services/storeSchemas.ts';
-import type { AppSettings, StoredAccount } from '../../shared/contracts.ts';
+import { getAccountActionHint } from '../../shared/accountActionUi.ts';
+import {
+  buildRegisterOutcomeMessage,
+  buildRegisterStartupMessages
+} from '../../shared/registerProgressUi.ts';
+import { getTempmailAvailabilityLabel } from '../../shared/registerDiagnosticsUi.ts';
+import type {
+  AppSettings,
+  RegisterDiagnostics,
+  RegisterRuntimeState,
+  StoredAccount
+} from '../../shared/contracts.ts';
 import './App.css';
 
 function maskValue(value: string, head: number = 8, tail: number = 6): string {
@@ -32,26 +43,39 @@ function formatUsage(current: number, limit: number): string {
   return `${current}/${limit}`;
 }
 
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function App() {
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [registering, setRegistering] = useState(false);
-  const [busyAction, setBusyAction] = useState<'claude' | 'cliproxy' | 'export' | 'probe' | null>(null);
+  const [runtimeState, setRuntimeState] = useState<RegisterRuntimeState>({ isRegistering: false });
+  const [busyAction, setBusyAction] = useState<'export' | 'diagnostics' | 'save' | null>(null);
   const [progress, setProgress] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showSettings, setShowSettings] = useState(true);
   const [flashMessage, setFlashMessage] = useState('');
+  const [manualOtp, setManualOtp] = useState('');
 
   useEffect(() => {
     void loadAccounts();
     void loadSettings();
+    void loadRegisterRuntimeState();
 
     window.api.onRegisterProgress((message: string) => {
       setProgress((previous) => [...previous, message]);
     });
+    window.api.onRegisterRuntimeState((state: RegisterRuntimeState) => {
+      setRuntimeState(state);
+      if (!state.isRegistering) {
+        void loadAccounts();
+      }
+    });
 
     return () => {
       window.api.removeRegisterProgressListener();
+      window.api.removeRegisterRuntimeStateListener();
     };
   }, []);
 
@@ -67,6 +91,11 @@ function App() {
     setSettings(nextSettings);
   }
 
+  async function loadRegisterRuntimeState(): Promise<void> {
+    const nextState = await window.api.getRegisterRuntimeState();
+    setRuntimeState(nextState);
+  }
+
   function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
     setSettings((current) => ({
       ...current,
@@ -75,28 +104,47 @@ function App() {
   }
 
   async function handleSaveSettings(): Promise<void> {
-    const saved = await window.api.saveSettings(settings);
-    setSettings(saved);
-    setFlashMessage('设置已保存');
+    setBusyAction('save');
+    try {
+      const saved = await window.api.saveSettings(settings);
+      setSettings(saved);
+      setFlashMessage('设置已保存');
+    } catch (error) {
+      setFlashMessage(`保存设置失败：${toErrorMessage(error)}`);
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function handleRegister(): Promise<void> {
-    setRegistering(true);
-    setProgress([]);
+    setProgress(
+      buildRegisterStartupMessages({
+        count: settings.registerCount,
+        proxyUrl: settings.proxyUrl,
+        registrationEmailMode: settings.registrationEmailMode,
+        otpMode: settings.otpMode
+      })
+    );
     setFlashMessage('');
 
     try {
       const result = await window.api.startRegister({
         count: settings.registerCount,
         proxyUrl: settings.proxyUrl,
-        autoImportClaude: settings.autoImportClaude,
-        autoWriteCliproxy: settings.autoWriteCliproxy
+        registrationEmailMode: settings.registrationEmailMode,
+        customEmailAddress: settings.customEmailAddress,
+        otpMode: settings.otpMode
       });
 
+      setProgress((current) => [
+        ...current,
+        ...result.results.map((item) => `${item.success ? '✓' : '⚠'} 任务 ${item.index}: ${item.message}`)
+      ]);
       await loadAccounts();
-      setFlashMessage(`注册任务完成：成功 ${result.successCount} / ${result.total}`);
-    } finally {
-      setRegistering(false);
+      setFlashMessage(buildRegisterOutcomeMessage(result));
+    } catch (error) {
+      setProgress((current) => [...current, `⚠ 注册任务异常中断：${toErrorMessage(error)}`]);
+      setFlashMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -117,49 +165,44 @@ function App() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `kiro-accounts-${Date.now()}.json`;
+      anchor.download = `kiro-manager-accounts-${Date.now()}.json`;
       anchor.click();
       URL.revokeObjectURL(url);
       setFlashMessage('导出文件已生成');
+    } catch (error) {
+      setFlashMessage(`导出 JSON 失败：${toErrorMessage(error)}`);
     } finally {
       setBusyAction(null);
     }
   }
 
-  async function handleImportClaude(): Promise<void> {
-    setBusyAction('claude');
+  async function handleSubmitManualOtp(): Promise<void> {
+    const pendingOtp = runtimeState.pendingOtp;
+    if (!pendingOtp) {
+      setFlashMessage('当前没有等待输入的验证码任务');
+      return;
+    }
+
     try {
-      const result = await window.api.importToClaudeApi(getTargetIds());
+      const result = await window.api.submitRegisterOtp(pendingOtp.taskId, manualOtp);
       setFlashMessage(result.message);
-    } finally {
-      setBusyAction(null);
+      if (result.success) {
+        setManualOtp('');
+      }
+    } catch (error) {
+      setFlashMessage(`提交验证码失败：${toErrorMessage(error)}`);
     }
   }
 
-  async function handleWriteCliproxy(): Promise<void> {
-    setBusyAction('cliproxy');
+  async function handleRunDiagnostics(): Promise<void> {
+    setBusyAction('diagnostics');
     try {
-      const result = await window.api.writeCliproxyAuthFiles(getTargetIds());
-      setFlashMessage(result.message);
+      const diagnostics = await window.api.runRegisterDiagnostics(settings.proxyUrl);
+      setFlashMessage(`诊断完成：${diagnostics.tempmail.message}`);
+    } catch (error) {
+      setFlashMessage(`运行诊断失败：${toErrorMessage(error)}`);
     } finally {
       setBusyAction(null);
-    }
-  }
-
-  async function handleProbeClaude(): Promise<void> {
-    setBusyAction('probe');
-    try {
-      const result = await window.api.probeClaudeApiChat();
-      setFlashMessage(result.message);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function handlePickCliproxyDir(): Promise<void> {
-    const result = await window.api.selectCliproxyAuthDir();
-    if (!result.canceled && result.path) {
-      updateSettings('cliproxyAuthDir', result.path);
     }
   }
 
@@ -173,10 +216,14 @@ function App() {
       return;
     }
 
-    await window.api.deleteAccounts(Array.from(selectedIds));
-    setSelectedIds(new Set());
-    await loadAccounts();
-    setFlashMessage('选中账号已删除');
+    try {
+      await window.api.deleteAccounts(Array.from(selectedIds));
+      setSelectedIds(new Set());
+      await loadAccounts();
+      setFlashMessage('选中账号已删除');
+    } catch (error) {
+      setFlashMessage(`删除账号失败：${toErrorMessage(error)}`);
+    }
   }
 
   async function handleDeleteSingle(id: number): Promise<void> {
@@ -184,13 +231,18 @@ function App() {
       return;
     }
 
-    await window.api.deleteAccount(id);
-    await loadAccounts();
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
+    try {
+      await window.api.deleteAccount(id);
+      await loadAccounts();
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+      setFlashMessage('账号已删除');
+    } catch (error) {
+      setFlashMessage(`删除账号失败：${toErrorMessage(error)}`);
+    }
   }
 
   function toggleSelected(id: number): void {
@@ -217,6 +269,27 @@ function App() {
   const readyAccounts = accounts.filter(
     (account) => account.refreshToken && account.clientId && account.clientSecret
   ).length;
+  const registering = runtimeState.isRegistering;
+  const diagnostics = runtimeState.latestDiagnostics;
+  const pendingOtp = runtimeState.pendingOtp;
+  const hasAccounts = accounts.length > 0;
+  const hasSelectedAccounts = selectedIds.size > 0;
+
+  function renderDiagnosticsValue(value: string | undefined): string {
+    return value && value.trim() ? value : '-';
+  }
+
+  function renderDiagnosticsSummary(result: RegisterDiagnostics | undefined): string {
+    if (!result) {
+      return '还没有运行诊断';
+    }
+
+    const location = [result.egress?.city, result.egress?.region, result.egress?.country]
+      .filter(Boolean)
+      .join(', ');
+
+    return location || result.egress?.ip || '已完成出口检测';
+  }
 
   return (
     <div className="app-shell">
@@ -225,11 +298,10 @@ function App() {
 
       <header className="hero">
         <div>
-          <p className="eyebrow">Kiro Registration Studio</p>
-          <h1>自动注册、凭证补全、下游导入一站完成</h1>
+          <p className="eyebrow">Kiro Manager</p>
+          <h1>自动注册、凭证补全、账号导出一站完成</h1>
           <p className="hero-copy">
-            注册成功后自动把 SSO Token 兑换成可落地的 Kiro / BuilderId 凭证，并直接送进
-            claude-api 或 cliproxyapi。
+            聚焦纯接口注册、本地账号池、手动 OTP 回退与链路诊断，只在需要时导出标准账号数据。
           </p>
         </div>
 
@@ -256,9 +328,9 @@ function App() {
           <div className="panel-header">
             <div>
               <p className="panel-title">控制台</p>
-              <h2>注册与目标系统设置</h2>
+              <h2>注册与导出设置</h2>
             </div>
-            <button className="ghost-button" onClick={() => setShowSettings((current) => !current)}>
+            <button className="ghost-button" type="button" onClick={() => setShowSettings((current) => !current)}>
               {showSettings ? '收起设置' : '展开设置'}
             </button>
           </div>
@@ -283,129 +355,198 @@ function App() {
                 <input
                   className="text-input"
                   type="text"
-                  placeholder="http://127.0.0.1:7890"
+                  placeholder="http://127.0.0.1:7890 / socks5://user:pass@host:port / ipfoxy://userId:proxyKey"
                   value={settings.proxyUrl}
                   onChange={(event) => updateSettings('proxyUrl', event.target.value)}
                 />
-              </label>
-
-              <label className="field field-span-2">
-                <span>claude-api 地址</span>
-                <input
-                  className="text-input"
-                  type="text"
-                  placeholder="http://127.0.0.1:62311"
-                  value={settings.claudeApiBaseUrl}
-                  onChange={(event) => updateSettings('claudeApiBaseUrl', event.target.value)}
-                />
+                <small className="field-hint">支持 http://、https://、socks5://、ipfoxy://用户ID:代理密钥</small>
               </label>
 
               <label className="field">
-                <span>claude-api 管理口令</span>
-                <input
+                <span>注册邮箱来源</span>
+                <select
                   className="text-input"
-                  type="password"
-                  value={settings.claudeApiAdminKey}
-                  onChange={(event) => updateSettings('claudeApiAdminKey', event.target.value)}
-                />
+                  value={settings.registrationEmailMode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value as AppSettings['registrationEmailMode'];
+                    setSettings((current) => ({
+                      ...current,
+                      registrationEmailMode: nextMode,
+                      otpMode: nextMode === 'custom' ? 'manual' : current.otpMode
+                    }));
+                  }}
+                >
+                  <option value="tempmail">Tempmail 自动创建</option>
+                  <option value="custom">我自己的邮箱</option>
+                </select>
               </label>
 
-              <label className="field field-span-2">
-                <span>cliproxyapi auth 目录</span>
-                <div className="inline-field">
+              <label className="field">
+                <span>OTP 模式</span>
+                <select
+                  className="text-input"
+                  value={settings.registrationEmailMode === 'custom' ? 'manual' : settings.otpMode}
+                  disabled={settings.registrationEmailMode === 'custom'}
+                  onChange={(event) =>
+                    updateSettings('otpMode', event.target.value as AppSettings['otpMode'])
+                  }
+                >
+                  <option value="tempmail">自动轮询 tempmail</option>
+                  <option value="manual">界面手动输入 OTP</option>
+                </select>
+              </label>
+
+              {settings.registrationEmailMode === 'custom' ? (
+                <label className="field field-span-2">
+                  <span>自定义邮箱地址</span>
                   <input
                     className="text-input"
-                    type="text"
-                    placeholder="选择 ~/.cli-proxy-api 或挂载的 auth 目录"
-                    value={settings.cliproxyAuthDir}
-                    onChange={(event) => updateSettings('cliproxyAuthDir', event.target.value)}
+                    type="email"
+                    placeholder="owner@example.com"
+                    value={settings.customEmailAddress}
+                    onChange={(event) => updateSettings('customEmailAddress', event.target.value)}
                   />
-                  <button className="secondary-button" onClick={handlePickCliproxyDir}>
-                    选择目录
-                  </button>
-                </div>
-              </label>
-
-              <label className="toggle-field">
-                <input
-                  type="checkbox"
-                  checked={settings.autoImportClaude}
-                  onChange={(event) => updateSettings('autoImportClaude', event.target.checked)}
-                />
-                <span>注册成功后自动导入 claude-api</span>
-              </label>
-
-              <label className="toggle-field">
-                <input
-                  type="checkbox"
-                  checked={settings.autoWriteCliproxy}
-                  onChange={(event) => updateSettings('autoWriteCliproxy', event.target.checked)}
-                />
-                <span>注册成功后自动写入 cliproxy auth 文件</span>
-              </label>
+                </label>
+              ) : null}
             </div>
           ) : null}
 
           <div className="action-row">
-            <button className="primary-button" disabled={registering} onClick={handleRegister}>
+            <button className="primary-button" type="button" disabled={registering} onClick={handleRegister}>
               {registering ? '注册进行中...' : '开始注册'}
             </button>
-            <button className="secondary-button" onClick={handleSaveSettings}>
-              保存设置
-            </button>
-            <button className="secondary-button" disabled={busyAction === 'export'} onClick={handleExport}>
-              {busyAction === 'export' ? '导出中...' : '导出 JSON'}
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busyAction === 'save'}
+              onClick={handleSaveSettings}
+            >
+              {busyAction === 'save' ? '保存中...' : '保存设置'}
             </button>
             <button
               className="secondary-button"
-              disabled={busyAction === 'claude'}
-              onClick={handleImportClaude}
+              type="button"
+              disabled={busyAction === 'export' || !hasAccounts}
+              onClick={handleExport}
             >
-              {busyAction === 'claude' ? '导入中...' : '导入 claude-api'}
+              {busyAction === 'export' ? '导出中...' : '导出账号 JSON'}
             </button>
             <button
               className="secondary-button"
-              disabled={busyAction === 'probe'}
-              onClick={handleProbeClaude}
+              type="button"
+              disabled={busyAction === 'diagnostics'}
+              onClick={handleRunDiagnostics}
             >
-              {busyAction === 'probe' ? '验证中...' : '验证 claude-api'}
+              {busyAction === 'diagnostics' ? '诊断中...' : '运行诊断'}
             </button>
             <button
-              className="secondary-button"
-              disabled={busyAction === 'cliproxy'}
-              onClick={handleWriteCliproxy}
+              className="danger-button"
+              type="button"
+              disabled={!hasSelectedAccounts}
+              onClick={handleDeleteSelected}
             >
-              {busyAction === 'cliproxy' ? '同步中...' : '同步 cliproxyapi'}
-            </button>
-            <button className="danger-button" onClick={handleDeleteSelected}>
               删除选中
             </button>
           </div>
 
+          <p className="action-hint">{getAccountActionHint(accounts.length, selectedIds.size)}</p>
+
           <div className="hint-grid">
             <div className="hint-card">
-              <span className="hint-label">claude-api</span>
-              <p>使用 `/v2/accounts/import-by-token` 接口直接批量导入。</p>
+              <span className="hint-label">导出接口</span>
+              <p>导出按钮会生成标准账号 JSON，后续由你在别处自行消费，不在当前应用里耦合下游仓库。</p>
             </div>
             <div className="hint-card">
-              <span className="hint-label">cliproxyapi</span>
-              <p>按其 Kiro provider 规范写入 `type=kiro` 的本地 auth JSON 文件。</p>
+              <span className="hint-label">OTP 回退</span>
+              <p>自定义邮箱会自动切到手动 OTP 模式，后续可在同一界面继续提交验证码。</p>
             </div>
           </div>
+
+          <div className="diagnostics-card">
+            <div className="panel-header compact-header">
+              <div>
+                <p className="panel-title">链路诊断</p>
+                <h2>出口、邮箱与最近阻塞</h2>
+              </div>
+              <span className="status-chip">{renderDiagnosticsSummary(diagnostics)}</span>
+            </div>
+
+            <div className="diagnostics-grid">
+              <div className="diagnostic-item">
+                <span className="diagnostic-label">出口 IP</span>
+                <strong>{renderDiagnosticsValue(diagnostics?.egress?.ip)}</strong>
+                <p>
+                  {[
+                    diagnostics?.egress?.city,
+                    diagnostics?.egress?.region,
+                    diagnostics?.egress?.country
+                  ]
+                    .filter(Boolean)
+                    .join(', ') || '尚未检测'}
+                </p>
+              </div>
+              <div className="diagnostic-item">
+                <span className="diagnostic-label">Tempmail</span>
+                <strong>{getTempmailAvailabilityLabel(diagnostics)}</strong>
+                <p>{diagnostics?.tempmail.message || '点击“运行诊断”检查邮箱创建能力'}</p>
+              </div>
+              <div className="diagnostic-item">
+                <span className="diagnostic-label">最近阻塞</span>
+                <strong>{runtimeState.lastFailure?.stage || '暂无'}</strong>
+                <p>{runtimeState.lastFailure?.message || '最近还没有记录到注册阻塞摘要'}</p>
+              </div>
+            </div>
+          </div>
+
+          {pendingOtp ? (
+            <div className="otp-card">
+              <div className="panel-header compact-header">
+                <div>
+                  <p className="panel-title">手动 OTP</p>
+                  <h2>等待你输入验证码</h2>
+                </div>
+                <span className="status-chip">任务 {pendingOtp.registerIndex}</span>
+              </div>
+
+              <p className="otp-copy">
+                当前注册任务正在等待 <strong>{pendingOtp.email}</strong> 的 6 位验证码。输入后应用会继续完成身份创建与凭证兑换。
+              </p>
+
+              <div className="otp-row">
+                <input
+                  className="text-input otp-input"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="6 位验证码"
+                  value={manualOtp}
+                  onChange={(event) => setManualOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+                <button className="primary-button" type="button" onClick={handleSubmitManualOtp}>
+                  提交验证码
+                </button>
+              </div>
+
+              <div className="otp-meta">
+                <span>请求时间：{formatDate(pendingOtp.requestedAt)}</span>
+                <span>任务 ID：{maskValue(pendingOtp.taskId, 6, 6)}</span>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel log-panel">
           <div className="panel-header">
             <div>
               <p className="panel-title">实时日志</p>
-              <h2>注册与导入过程</h2>
+              <h2>注册与保存过程</h2>
             </div>
             <span className="status-chip">{registering ? '运行中' : '空闲'}</span>
           </div>
 
           <div className="log-console">
             {progress.length === 0 ? (
-              <div className="log-empty">开始注册后，这里会实时显示纯接口注册、凭证兑换与下游导入日志。</div>
+              <div className="log-empty">开始注册后，这里会实时显示纯接口注册、凭证兑换与本地保存日志。</div>
             ) : (
               progress.map((line, index) => (
                 <div key={`${line}-${index}`} className="log-line">
@@ -422,7 +563,12 @@ function App() {
               <p className="panel-title">账号池</p>
               <h2>本地账号管理</h2>
             </div>
-            <button className="ghost-button" disabled={accounts.length === 0} onClick={toggleSelectAll}>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={accounts.length === 0}
+              onClick={toggleSelectAll}
+            >
               {selectedIds.size === accounts.length && accounts.length > 0 ? '取消全选' : '全选'}
             </button>
           </div>
@@ -430,7 +576,7 @@ function App() {
           {accounts.length === 0 ? (
             <div className="empty-state">
               <h3>还没有账号</h3>
-              <p>先在上方配置好参数，再点击“开始注册”生成第一批可导入账号。</p>
+              <p>先在上方配置好参数，再点击“开始注册”生成第一批可导出账号。</p>
             </div>
           ) : (
             <div className="table-wrap">
@@ -477,7 +623,7 @@ function App() {
                         <td>{account.name || '-'}</td>
                         <td>
                           <span className={`badge ${credentialReady ? 'badge-ready' : 'badge-pending'}`}>
-                            {credentialReady ? '可导入' : '待补全'}
+                            {credentialReady ? '可导出' : '待补全'}
                           </span>
                         </td>
                         <td>{account.subscriptionTitle || '-'}</td>
@@ -486,7 +632,7 @@ function App() {
                         <td className="mono-cell">{maskValue(account.clientId)}</td>
                         <td>{formatDate(account.createdAt)}</td>
                         <td>
-                          <button className="table-action" onClick={() => handleDeleteSingle(account.id)}>
+                          <button className="table-action" type="button" onClick={() => handleDeleteSingle(account.id)}>
                             删除
                           </button>
                         </td>
