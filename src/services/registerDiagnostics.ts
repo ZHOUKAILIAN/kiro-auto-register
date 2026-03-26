@@ -1,13 +1,33 @@
 import { createFetchContext, type FetchImpl } from './httpClient.ts';
 import { formatErrorDetails } from './errorDetails.ts';
+import {
+  probeOutlookMailbox,
+  type OutlookMailboxProbeResult
+} from './outlookMailbox.ts';
 import { createInbox, type TempmailInbox } from './tempmail.ts';
-import type { RegisterDiagnostics, RegistrationFailureSummary } from '../shared/contracts.ts';
+import type {
+  MailboxProvider,
+  RegisterDiagnostics,
+  RegistrationFailureSummary
+} from '../shared/contracts.ts';
 
 interface RunRegisterDiagnosticsOptions {
   proxyUrl?: string;
   lastFailure?: RegistrationFailureSummary;
   fetchImpl?: FetchImpl;
   createInboxFn?: (options: { fetchImpl?: FetchImpl }) => Promise<TempmailInbox>;
+  mailboxConfig?: {
+    provider: MailboxProvider;
+    email: string;
+    clientId: string;
+    refreshToken: string;
+    onRefreshToken?: (value: string) => void;
+  };
+  probeOutlookMailboxFn?: (options: {
+    email: string;
+    clientId: string;
+    refreshToken: string;
+  }) => Promise<OutlookMailboxProbeResult>;
 }
 
 /**
@@ -43,9 +63,33 @@ export async function runRegisterDiagnostics(
     : await createFetchContext(options.proxyUrl);
   const fetchImpl = options.fetchImpl ?? fetchContext?.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const createInboxFn = options.createInboxFn ?? createInbox;
+  const probeOutlookMailboxFn = options.probeOutlookMailboxFn ?? probeOutlookMailbox;
 
   try {
     const egress = await fetchEgressInfo(fetchImpl);
+    let mailbox: RegisterDiagnostics['mailbox'];
+
+    if (options.mailboxConfig?.provider === 'outlook-graph') {
+      const probeResult = await probeOutlookMailboxFn({
+        email: options.mailboxConfig.email,
+        clientId: options.mailboxConfig.clientId,
+        refreshToken: options.mailboxConfig.refreshToken
+      });
+
+      if (
+        probeResult.nextRefreshToken &&
+        probeResult.nextRefreshToken !== options.mailboxConfig.refreshToken
+      ) {
+        options.mailboxConfig.onRefreshToken?.(probeResult.nextRefreshToken);
+      }
+
+      mailbox = {
+        provider: 'outlook-graph',
+        success: probeResult.success,
+        message: probeResult.message,
+        email: options.mailboxConfig.email
+      };
+    }
 
     try {
       const inbox = await createInboxFn({
@@ -56,6 +100,7 @@ export async function runRegisterDiagnostics(
         executedAt: Date.now(),
         proxyUrl: options.proxyUrl,
         egress,
+        mailbox,
         tempmail: {
           success: true,
           message: 'Tempmail 邮箱创建成功',
@@ -73,6 +118,7 @@ export async function runRegisterDiagnostics(
         executedAt: Date.now(),
         proxyUrl: options.proxyUrl,
         egress,
+        mailbox,
         tempmail: {
           success: false,
           message: `Tempmail 邮箱创建失败: ${formatErrorDetails(error)}`

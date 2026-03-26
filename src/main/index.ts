@@ -8,6 +8,10 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import Store from 'electron-store';
 import { autoRegister, type RegisterResult } from '../services/kiroRegister.ts';
 import { buildExportPayload } from '../services/accountFormats.ts';
+import {
+  probeOutlookMailbox,
+  waitForOutlookVerificationCode
+} from '../services/outlookMailbox.ts';
 import { runRegisterDiagnostics } from '../services/registerDiagnostics.ts';
 import { RegisterRuntimeController } from '../services/registerRuntime.ts';
 import {
@@ -172,6 +176,42 @@ function createStoredAccount(
   });
 }
 
+function persistRotatedOutlookRefreshToken(
+  settings: AppSettings,
+  nextRefreshToken: string | undefined,
+  reason: 'diagnostics' | 'register'
+): void {
+  if (!nextRefreshToken || nextRefreshToken === settings.outlookRefreshToken) {
+    return;
+  }
+
+  saveSettings({
+    outlookRefreshToken: nextRefreshToken
+  });
+  emitProgress(`Outlook: 已在${reason === 'register' ? '注册流程' : '诊断流程'}后更新 refresh token`);
+}
+
+async function resolveOutlookMailboxOtp(input: {
+  email: string;
+  otpSentAt: number;
+}): Promise<string | null> {
+  const settings = getSettings();
+  if (settings.mailboxProvider !== 'outlook-graph') {
+    throw new Error(`当前 mailbox provider 暂不支持: ${settings.mailboxProvider}`);
+  }
+
+  const result = await waitForOutlookVerificationCode({
+    email: input.email,
+    clientId: settings.outlookClientId,
+    refreshToken: settings.outlookRefreshToken,
+    otpSentAt: input.otpSentAt,
+    onProgress: emitProgress
+  });
+
+  persistRotatedOutlookRefreshToken(settings, result.nextRefreshToken, 'register');
+  return result.code;
+}
+
 async function runRegisterWorkflow(options: RegisterOptions): Promise<BatchRegisterResult> {
   const total = Math.max(1, Math.floor(options.count || 1));
   const results: RegisterTaskResult[] = [];
@@ -189,7 +229,15 @@ async function runRegisterWorkflow(options: RegisterOptions): Promise<BatchRegis
         registrationEmailMode: options.registrationEmailMode,
         customEmailAddress: options.customEmailAddress,
         otpMode: options.otpMode,
-        requestOtp: async ({ email }) => {
+        requestOtp: async ({ email, source, otpSentAt }) => {
+          if (source === 'mailbox') {
+            emitProgress(`将通过 Outlook 邮箱自动收取 ${email} 的验证码`);
+            return resolveOutlookMailboxOtp({
+              email,
+              otpSentAt
+            });
+          }
+
           emitProgress(`请输入 ${email} 的 6 位验证码以继续当前注册任务`);
           const otpPromise = registerRuntime.requestManualOtp({
             registerIndex: index + 1,
@@ -298,9 +346,23 @@ function setupIPCHandlers(): void {
   );
 
   ipcMain.handle('run-register-diagnostics', async (_event, proxyUrl?: string): Promise<RegisterDiagnostics> => {
+    const settings = getSettings();
     const diagnostics = await runRegisterDiagnostics({
       proxyUrl: normalizeOptionalProxyUrl(proxyUrl),
-      lastFailure: registerRuntime.getState().lastFailure
+      lastFailure: registerRuntime.getState().lastFailure,
+      mailboxConfig:
+        settings.registrationEmailMode === 'custom' && settings.otpMode === 'mailbox'
+          ? {
+              provider: settings.mailboxProvider,
+              email: settings.customEmailAddress,
+              clientId: settings.outlookClientId,
+              refreshToken: settings.outlookRefreshToken,
+              onRefreshToken: (value: string) => {
+                persistRotatedOutlookRefreshToken(settings, value, 'diagnostics');
+              }
+            }
+          : undefined,
+      probeOutlookMailboxFn: probeOutlookMailbox
     });
     registerRuntime.setDiagnostics(diagnostics);
     emitRegisterRuntimeState();

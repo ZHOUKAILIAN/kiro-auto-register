@@ -1,5 +1,6 @@
 import type {
   BatchRegisterResult,
+  MailboxProvider,
   OtpMode,
   RegistrationEmailMode
 } from './contracts.ts';
@@ -8,13 +9,15 @@ function describeEmailMode(mode: RegistrationEmailMode): string {
   return mode === 'custom' ? '我自己的邮箱' : 'Tempmail 自动创建';
 }
 
-function describeOtpMode(mode: OtpMode): string {
+function describeOtpMode(mode: OtpMode, mailboxProvider?: MailboxProvider): string {
   if (mode === 'manual') {
     return '界面手动输入';
   }
 
   if (mode === 'mailbox') {
-    return '邮箱自动收码';
+    return mailboxProvider === 'outlook-graph'
+      ? '邮箱自动收码（Outlook Graph）'
+      : '邮箱自动收码';
   }
 
   return 'Tempmail 自动轮询';
@@ -54,17 +57,22 @@ export function maskProxyUrlForDisplay(proxyUrl: string): string {
 
 export function buildRegisterStartupMessages(input: {
   count: number;
+  mailboxProvider?: MailboxProvider;
   proxyUrl: string;
   registrationEmailMode: RegistrationEmailMode;
   otpMode: OtpMode;
 }): string[] {
   const proxyUrl = maskProxyUrlForDisplay(input.proxyUrl);
+  const effectiveOtpMode =
+    input.registrationEmailMode === 'custom' && input.otpMode === 'tempmail'
+      ? 'manual'
+      : input.otpMode;
 
   return [
     `已提交注册任务，准备启动 ${input.count} 个注册流程`,
     proxyUrl ? `网络出口：代理 ${proxyUrl}` : '网络出口：未设置代理，将使用当前系统网络',
     `邮箱来源：${describeEmailMode(input.registrationEmailMode)}`,
-    `OTP 获取：${describeOtpMode(input.registrationEmailMode === 'custom' ? 'manual' : input.otpMode)}`
+    `OTP 获取：${describeOtpMode(effectiveOtpMode, input.mailboxProvider)}`
   ];
 }
 

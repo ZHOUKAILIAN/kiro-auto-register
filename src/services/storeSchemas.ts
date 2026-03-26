@@ -6,6 +6,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   registrationEmailMode: 'tempmail',
   customEmailAddress: '',
   otpMode: 'tempmail',
+  mailboxProvider: 'outlook-graph',
+  outlookClientId: '',
+  outlookRefreshToken: '',
   customMailboxHost: '',
   customMailboxPort: 993,
   customMailboxUsername: '',
@@ -42,6 +45,15 @@ export function normalizeSettings(input: unknown): AppSettings {
     ) as AppSettings['registrationEmailMode'],
     customEmailAddress: readString(settings.customEmailAddress, DEFAULT_SETTINGS.customEmailAddress),
     otpMode: readString(settings.otpMode, DEFAULT_SETTINGS.otpMode) as AppSettings['otpMode'],
+    mailboxProvider: readString(
+      settings.mailboxProvider,
+      DEFAULT_SETTINGS.mailboxProvider
+    ) as AppSettings['mailboxProvider'],
+    outlookClientId: readString(settings.outlookClientId, DEFAULT_SETTINGS.outlookClientId),
+    outlookRefreshToken: readString(
+      settings.outlookRefreshToken,
+      DEFAULT_SETTINGS.outlookRefreshToken
+    ),
     customMailboxHost: readString(settings.customMailboxHost, DEFAULT_SETTINGS.customMailboxHost),
     customMailboxPort: readPositiveInteger(
       settings.customMailboxPort,

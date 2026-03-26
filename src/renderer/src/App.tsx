@@ -120,6 +120,7 @@ function App() {
     setProgress(
       buildRegisterStartupMessages({
         count: settings.registerCount,
+        mailboxProvider: settings.mailboxProvider,
         proxyUrl: settings.proxyUrl,
         registrationEmailMode: settings.registrationEmailMode,
         otpMode: settings.otpMode
@@ -198,7 +199,8 @@ function App() {
     setBusyAction('diagnostics');
     try {
       const diagnostics = await window.api.runRegisterDiagnostics(settings.proxyUrl);
-      setFlashMessage(`诊断完成：${diagnostics.tempmail.message}`);
+      const summaries = [diagnostics.tempmail.message, diagnostics.mailbox?.message].filter(Boolean);
+      setFlashMessage(`诊断完成：${summaries.join('；')}`);
     } catch (error) {
       setFlashMessage(`运行诊断失败：${toErrorMessage(error)}`);
     } finally {
@@ -274,6 +276,10 @@ function App() {
   const pendingOtp = runtimeState.pendingOtp;
   const hasAccounts = accounts.length > 0;
   const hasSelectedAccounts = selectedIds.size > 0;
+  const effectiveOtpMode =
+    settings.registrationEmailMode === 'custom' && settings.otpMode === 'tempmail'
+      ? 'manual'
+      : settings.otpMode;
 
   function renderDiagnosticsValue(value: string | undefined): string {
     return value && value.trim() ? value : '-';
@@ -372,7 +378,10 @@ function App() {
                     setSettings((current) => ({
                       ...current,
                       registrationEmailMode: nextMode,
-                      otpMode: nextMode === 'custom' ? 'manual' : current.otpMode
+                      otpMode:
+                        nextMode === 'custom' && current.otpMode === 'tempmail'
+                          ? 'manual'
+                          : current.otpMode
                     }));
                   }}
                 >
@@ -385,28 +394,80 @@ function App() {
                 <span>OTP 模式</span>
                 <select
                   className="text-input"
-                  value={settings.registrationEmailMode === 'custom' ? 'manual' : settings.otpMode}
-                  disabled={settings.registrationEmailMode === 'custom'}
+                  value={effectiveOtpMode}
                   onChange={(event) =>
                     updateSettings('otpMode', event.target.value as AppSettings['otpMode'])
                   }
                 >
-                  <option value="tempmail">自动轮询 tempmail</option>
-                  <option value="manual">界面手动输入 OTP</option>
+                  {settings.registrationEmailMode === 'custom' ? (
+                    <>
+                      <option value="manual">界面手动输入 OTP</option>
+                      <option value="mailbox">Outlook 邮箱自动收码</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="tempmail">自动轮询 tempmail</option>
+                      <option value="manual">界面手动输入 OTP</option>
+                    </>
+                  )}
                 </select>
               </label>
 
               {settings.registrationEmailMode === 'custom' ? (
-                <label className="field field-span-2">
-                  <span>自定义邮箱地址</span>
-                  <input
-                    className="text-input"
-                    type="email"
-                    placeholder="owner@example.com"
-                    value={settings.customEmailAddress}
-                    onChange={(event) => updateSettings('customEmailAddress', event.target.value)}
-                  />
-                </label>
+                <>
+                  <label className="field field-span-2">
+                    <span>自定义邮箱地址</span>
+                    <input
+                      className="text-input"
+                      type="email"
+                      placeholder="owner@outlook.com"
+                      value={settings.customEmailAddress}
+                      onChange={(event) => updateSettings('customEmailAddress', event.target.value)}
+                    />
+                  </label>
+
+                  {effectiveOtpMode === 'mailbox' ? (
+                    <>
+                      <label className="field field-span-2">
+                        <span>邮箱自动收码提供方</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          value="Outlook Graph"
+                          disabled
+                        />
+                        <small className="field-hint">
+                          当前轮次仅内置 Outlook Graph 收码链路，需要你提供可用的 client_id 与 refresh_token。
+                        </small>
+                      </label>
+
+                      <label className="field field-span-2">
+                        <span>Outlook Graph Client ID</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          placeholder="9e5f94bc-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                          value={settings.outlookClientId}
+                          onChange={(event) => updateSettings('outlookClientId', event.target.value)}
+                        />
+                      </label>
+
+                      <label className="field field-span-2">
+                        <span>Outlook Graph Refresh Token</span>
+                        <textarea
+                          className="text-input"
+                          rows={4}
+                          placeholder="M.C5_BAY.xxxxx..."
+                          value={settings.outlookRefreshToken}
+                          onChange={(event) => updateSettings('outlookRefreshToken', event.target.value)}
+                        />
+                        <small className="field-hint">
+                          注册和诊断会直接用这组凭据访问 Outlook Graph 邮箱，不会展示完整 token。
+                        </small>
+                      </label>
+                    </>
+                  ) : null}
+                </>
               ) : null}
             </div>
           ) : null}
@@ -458,7 +519,7 @@ function App() {
             </div>
             <div className="hint-card">
               <span className="hint-label">OTP 回退</span>
-              <p>自定义邮箱会自动切到手动 OTP 模式，后续可在同一界面继续提交验证码。</p>
+              <p>自定义邮箱既可以走手动 OTP，也可以走 Outlook 邮箱自动收码，失败日志都会继续写进当前面板。</p>
             </div>
           </div>
 
@@ -495,6 +556,26 @@ function App() {
                 <strong>{runtimeState.lastFailure?.stage || '暂无'}</strong>
                 <p>{runtimeState.lastFailure?.message || '最近还没有记录到注册阻塞摘要'}</p>
               </div>
+              {settings.registrationEmailMode === 'custom' ? (
+                <div className="diagnostic-item">
+                  <span className="diagnostic-label">邮箱自动收码</span>
+                  <strong>
+                    {diagnostics?.mailbox
+                      ? diagnostics.mailbox.success
+                        ? '可用'
+                        : '不可用'
+                      : effectiveOtpMode === 'mailbox'
+                        ? '待检测'
+                        : '未启用'}
+                  </strong>
+                  <p>
+                    {diagnostics?.mailbox?.message ||
+                      (effectiveOtpMode === 'mailbox'
+                        ? '点击“运行诊断”验证 Outlook 邮箱凭据是否可用'
+                        : '当前未启用邮箱自动收码')}
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
 

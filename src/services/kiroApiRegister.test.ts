@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {
   buildRegistrationRedeemRequest,
   extractWorkflowIdFromProfileRedirect,
-  extractWorkflowStateHandleFromRedirect
+  extractWorkflowStateHandleFromRedirect,
+  resolveOtpAcquisitionMode
 } from './kiroApiRegister.ts';
 
 test('extractWorkflowIdFromProfileRedirect reads workflowID from hash-based profile redirects', () => {
@@ -106,4 +107,30 @@ test('buildSessionHeaders applies region-aware user-agent and accept-language de
   assert.equal(headers.get('user-agent'), profile.userAgent);
   assert.equal(headers.get('accept-language'), profile.acceptLanguage);
   assert.equal(headers.get('x-trace-id'), 'trace-1');
+});
+
+test('resolveOtpAcquisitionMode prefers mailbox provider over manual fallback for custom mailboxes', () => {
+  assert.equal(
+    resolveOtpAcquisitionMode({
+      inboxSource: 'custom',
+      otpMode: 'mailbox'
+    }),
+    'mailbox'
+  );
+
+  assert.equal(
+    resolveOtpAcquisitionMode({
+      inboxSource: 'custom',
+      otpMode: 'manual'
+    }),
+    'manual'
+  );
+
+  assert.equal(
+    resolveOtpAcquisitionMode({
+      inboxSource: 'tempmail',
+      otpMode: 'tempmail'
+    }),
+    'tempmail'
+  );
 });

@@ -14,6 +14,9 @@ test('normalizeSettings backfills defaults and preserves known values', () => {
     registrationEmailMode: 'custom',
     customEmailAddress: 'owner@example.com',
     otpMode: 'manual',
+    mailboxProvider: 'outlook-graph',
+    outlookClientId: 'graph-client-id',
+    outlookRefreshToken: 'refresh-token',
     customMailboxHost: 'imap.example.com',
     customMailboxPort: 995,
     customMailboxUsername: 'owner',
@@ -28,6 +31,9 @@ test('normalizeSettings backfills defaults and preserves known values', () => {
     registrationEmailMode: 'custom',
     customEmailAddress: 'owner@example.com',
     otpMode: 'manual',
+    mailboxProvider: 'outlook-graph',
+    outlookClientId: 'graph-client-id',
+    outlookRefreshToken: 'refresh-token',
     customMailboxHost: 'imap.example.com',
     customMailboxPort: 995,
     customMailboxUsername: 'owner',
@@ -46,6 +52,25 @@ test('normalizeSettings safely ignores legacy downstream integration fields', ()
   });
 
   assert.deepEqual(normalized, DEFAULT_SETTINGS);
+});
+
+test('normalizeSettings backfills Outlook mailbox fields for legacy settings payloads', () => {
+  const normalized = normalizeSettings({
+    proxyUrl: 'http://127.0.0.1:7890',
+    registerCount: 2,
+    registrationEmailMode: 'custom',
+    customEmailAddress: 'owner@outlook.com',
+    otpMode: 'mailbox'
+  });
+
+  assert.deepEqual(normalized, {
+    ...DEFAULT_SETTINGS,
+    proxyUrl: 'http://127.0.0.1:7890',
+    registerCount: 2,
+    registrationEmailMode: 'custom',
+    customEmailAddress: 'owner@outlook.com',
+    otpMode: 'mailbox'
+  });
 });
 
 test('normalizeAccountRecord upgrades legacy sso-only accounts into the new shape', () => {

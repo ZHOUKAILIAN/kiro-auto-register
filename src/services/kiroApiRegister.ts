@@ -44,7 +44,7 @@ interface RegistrationInbox {
 
 export interface OtpRequest {
   email: string;
-  source: 'tempmail' | 'manual';
+  source: 'tempmail' | 'manual' | 'mailbox';
   otpSentAt: number;
   tempmailToken?: string;
 }
@@ -55,7 +55,7 @@ export interface AutoRegisterFlowOptions {
   registrationEmailMode?: RegistrationEmailMode;
   customEmailAddress?: string;
   otpMode?: OtpMode;
-  requestOtp?: (request: OtpRequest) => Promise<string>;
+  requestOtp?: (request: OtpRequest) => Promise<string | null>;
 }
 
 interface ResolvedAutoRegisterFlowOptions {
@@ -64,7 +64,7 @@ interface ResolvedAutoRegisterFlowOptions {
   registrationEmailMode: RegistrationEmailMode;
   customEmailAddress: string;
   otpMode: OtpMode;
-  requestOtp?: (request: OtpRequest) => Promise<string>;
+  requestOtp?: (request: OtpRequest) => Promise<string | null>;
 }
 
 interface RequestResult {
@@ -401,6 +401,21 @@ function validateCustomEmailAddress(email: string): string {
   return normalized;
 }
 
+export function resolveOtpAcquisitionMode(input: {
+  inboxSource: RegistrationEmailMode;
+  otpMode: OtpMode;
+}): 'tempmail' | 'manual' | 'mailbox' {
+  if (input.otpMode === 'mailbox') {
+    return 'mailbox';
+  }
+
+  if (input.otpMode === 'manual' || input.inboxSource === 'custom') {
+    return 'manual';
+  }
+
+  return 'tempmail';
+}
+
 async function resolveInbox(
   fetchImpl: FetchImpl,
   options: ResolvedAutoRegisterFlowOptions
@@ -435,11 +450,25 @@ async function resolveOtpCode(
   options: ResolvedAutoRegisterFlowOptions,
   fetchImpl: FetchImpl
 ): Promise<string | null> {
-  if (options.otpMode === 'mailbox') {
-    throw new Error('自带邮箱自动收码将在后续版本提供，请先使用手动 OTP');
+  const acquisitionMode = resolveOtpAcquisitionMode({
+    inboxSource: inbox.source,
+    otpMode: options.otpMode
+  });
+
+  if (acquisitionMode === 'mailbox') {
+    if (!options.requestOtp) {
+      throw new Error('当前 OTP 模式需要界面提供邮箱自动收码能力');
+    }
+
+    return options.requestOtp({
+      email: inbox.email,
+      source: 'mailbox',
+      otpSentAt,
+      tempmailToken: inbox.token
+    });
   }
 
-  if (options.otpMode === 'manual' || inbox.source === 'custom') {
+  if (acquisitionMode === 'manual') {
     if (!options.requestOtp) {
       throw new Error('当前 OTP 模式需要界面提供验证码输入能力');
     }

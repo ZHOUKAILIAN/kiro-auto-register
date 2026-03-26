@@ -41,6 +41,24 @@ test('buildRegisterStartupMessages describes custom mailbox and manual otp modes
   );
 });
 
+test('buildRegisterStartupMessages describes Outlook mailbox auto otp mode', () => {
+  assert.deepEqual(
+    buildRegisterStartupMessages({
+      count: 1,
+      proxyUrl: '',
+      registrationEmailMode: 'custom',
+      otpMode: 'mailbox',
+      mailboxProvider: 'outlook-graph'
+    }),
+    [
+      '已提交注册任务，准备启动 1 个注册流程',
+      '网络出口：未设置代理，将使用当前系统网络',
+      '邮箱来源：我自己的邮箱',
+      'OTP 获取：邮箱自动收码（Outlook Graph）'
+    ]
+  );
+});
+
 test('maskProxyUrlForDisplay redacts ipfoxy proxy keys in startup logs', () => {
   assert.equal(
     maskProxyUrlForDisplay('ipfoxy://i5v0e62:c6e82f0f680c38072ffd27b976c62144'),

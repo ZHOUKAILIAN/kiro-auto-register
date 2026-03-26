@@ -78,3 +78,40 @@ test('runRegisterDiagnostics keeps nested proxy cause details in tempmail failur
     /Proxy response \(502\) !== 200 when HTTP Tunneling/
   );
 });
+
+test('runRegisterDiagnostics includes Outlook mailbox probe summary when mailbox mode is configured', async () => {
+  const diagnostics = await runRegisterDiagnostics({
+    fetchImpl: async () =>
+      Response.json({
+        ip: '66.93.67.200',
+        city: 'Seoul',
+        region: 'Seoul',
+        country: 'KR',
+        org: 'Example Network'
+      }),
+    createInboxFn: async () => ({
+      email: 'diag@example.com',
+      token: 'diag-token',
+      createdAt: 1_764_000_000_000
+    }),
+    mailboxConfig: {
+      provider: 'outlook-graph',
+      email: 'owner@outlook.com',
+      clientId: 'graph-client-id',
+      refreshToken: 'refresh-token'
+    },
+    probeOutlookMailboxFn: async () => ({
+      provider: 'outlook-graph',
+      success: true,
+      message: 'Outlook 邮箱连接正常',
+      nextRefreshToken: 'refresh-token-2'
+    })
+  });
+
+  assert.deepEqual(diagnostics.mailbox, {
+    provider: 'outlook-graph',
+    success: true,
+    message: 'Outlook 邮箱连接正常',
+    email: 'owner@outlook.com'
+  });
+});

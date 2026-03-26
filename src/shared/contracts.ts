@@ -1,6 +1,7 @@
 export type AccountAuthMethod = 'builder-id' | 'idc';
 export type RegistrationEmailMode = 'tempmail' | 'custom';
 export type OtpMode = 'tempmail' | 'manual' | 'mailbox';
+export type MailboxProvider = 'outlook-graph';
 
 export interface StoredAccount {
   id: number;
@@ -29,6 +30,9 @@ export interface AppSettings {
   registrationEmailMode: RegistrationEmailMode;
   customEmailAddress: string;
   otpMode: OtpMode;
+  mailboxProvider: MailboxProvider;
+  outlookClientId: string;
+  outlookRefreshToken: string;
   customMailboxHost: string;
   customMailboxPort: number;
   customMailboxUsername: string;
@@ -75,6 +79,12 @@ export interface RegisterDiagnostics {
     org?: string;
   };
   tempmail: {
+    success: boolean;
+    message: string;
+    email?: string;
+  };
+  mailbox?: {
+    provider: MailboxProvider;
     success: boolean;
     message: string;
     email?: string;
