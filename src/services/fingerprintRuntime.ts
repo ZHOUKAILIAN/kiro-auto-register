@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import { JSDOM } from 'jsdom';
 
+import type { EnvironmentProfile } from './environmentProfile.ts';
 import type { FetchImpl } from './httpClient.ts';
 
 const DEFAULT_SELECTOR = '#fpr_form';
@@ -57,8 +58,6 @@ interface BrowserLikeWindow extends Window, FwcimWindow {
 
 let cachedScriptPromise: Promise<string> | null = null;
 
-const DEFAULT_BROWSER_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
 const UNMASKED_VENDOR_WEBGL = 0x9245;
 const UNMASKED_RENDERER_WEBGL = 0x9246;
 const DEFAULT_SCREEN = {
@@ -234,18 +233,29 @@ class AudioContextStub {
   }
 }
 
-function installBrowserLikeEnvironment(window: BrowserLikeWindow): void {
+function installBrowserLikeEnvironment(
+  window: BrowserLikeWindow,
+  environmentProfile?: EnvironmentProfile
+): void {
+  const navigatorProfile = environmentProfile ?? {
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+    platform: 'MacIntel',
+    language: 'en-US',
+    languages: ['en-US', 'en']
+  };
+
   Object.defineProperty(window.navigator, 'webdriver', {
     configurable: true,
     value: false
   });
   Object.defineProperty(window.navigator, 'userAgent', {
     configurable: true,
-    value: DEFAULT_BROWSER_USER_AGENT
+    value: navigatorProfile.userAgent
   });
   Object.defineProperty(window.navigator, 'platform', {
     configurable: true,
-    value: 'MacIntel'
+    value: navigatorProfile.platform
   });
   Object.defineProperty(window.navigator, 'vendor', {
     configurable: true,
@@ -253,11 +263,11 @@ function installBrowserLikeEnvironment(window: BrowserLikeWindow): void {
   });
   Object.defineProperty(window.navigator, 'language', {
     configurable: true,
-    value: 'en-US'
+    value: navigatorProfile.language
   });
   Object.defineProperty(window.navigator, 'languages', {
     configurable: true,
-    value: ['en-US', 'en']
+    value: navigatorProfile.languages
   });
   Object.defineProperty(window.navigator, 'hardwareConcurrency', {
     configurable: true,
@@ -391,6 +401,7 @@ async function loadFwcimScript(fetchImpl: FetchImpl): Promise<string> {
 }
 
 export interface GenerateFingerprintOptions {
+  environmentProfile?: EnvironmentProfile;
   fetchImpl?: FetchImpl;
   formSelector?: string;
   scriptContent?: string;
@@ -419,7 +430,7 @@ export async function generateFingerprint(
     defineWindowValue(window, 'crypto', crypto.webcrypto as BrowserLikeWindow['crypto']);
     defineWindowValue(window, 'TextEncoder', TextEncoder);
     defineWindowValue(window, 'TextDecoder', TextDecoder);
-    installBrowserLikeEnvironment(window);
+    installBrowserLikeEnvironment(window, options.environmentProfile);
 
     window.eval(scriptContent);
 

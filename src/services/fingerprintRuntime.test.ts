@@ -1,11 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import type { EnvironmentProfile } from './environmentProfile.ts';
 import {
   buildBrowserData,
   generateFingerprint,
   resolveFingerprintReportResult
 } from './fingerprintRuntime.ts';
+
+async function loadEnvironmentProfile(countryCode: string): Promise<EnvironmentProfile | null> {
+  try {
+    const module = (await import('./environmentProfile.ts')) as {
+      resolveEnvironmentProfile: (value?: string) => EnvironmentProfile;
+    };
+    return module.resolveEnvironmentProfile(countryCode);
+  } catch {
+    return null;
+  }
+}
 
 test('resolveFingerprintReportResult supports legacy single-argument callbacks', () => {
   assert.equal(resolveFingerprintReportResult(['fingerprint-1']), 'fingerprint-1');
@@ -64,4 +76,46 @@ test('generateFingerprint provides browser-like canvas and navigator capabilitie
   });
 
   assert.equal(fingerprint, 'true|MacIntel|1440|boolean|true|3');
+});
+
+test('generateFingerprint applies environment profile overrides to navigator values', async () => {
+  const environmentProfile = await loadEnvironmentProfile('JP');
+
+  assert.ok(environmentProfile, 'environmentProfile.ts should provide region-aware navigator settings');
+  if (!environmentProfile) {
+    return;
+  }
+
+  const options: Parameters<typeof generateFingerprint>[0] = {
+    url: 'https://us-east-1.signin.aws/platform/d-9067642ac7/signup?workflowStateHandle=test',
+    scriptContent: `
+      window.fwcim = {
+        profileForm() {},
+        report(selector, callback) {
+          callback(
+            null,
+            [
+              navigator.userAgent,
+              navigator.language,
+              navigator.languages.join(','),
+              navigator.platform
+            ].join('|')
+          );
+        }
+      };
+    `,
+    environmentProfile
+  };
+
+  const fingerprint = await generateFingerprint(options);
+
+  assert.equal(
+    fingerprint,
+    [
+      environmentProfile.userAgent,
+      environmentProfile.language,
+      environmentProfile.languages.join(','),
+      environmentProfile.platform
+    ].join('|')
+  );
 });

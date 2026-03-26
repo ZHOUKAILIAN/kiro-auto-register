@@ -4,12 +4,18 @@ import {
   buildBrowserData,
   generateFingerprint
 } from './fingerprintRuntime.ts';
+import {
+  resolveEnvironmentProfile,
+  summarizeEnvironmentProfile,
+  type EnvironmentProfile
+} from './environmentProfile.ts';
 import { formatErrorDetails } from './errorDetails.ts';
 import {
   CookieJar,
   createFetchContext,
   type FetchImpl
 } from './httpClient.ts';
+import { fetchEgressInfo } from './registerDiagnostics.ts';
 import {
   createInbox,
   waitForVerificationCode,
@@ -81,6 +87,7 @@ interface RegistrationRedeemRequest {
 
 interface ApiSession {
   cookieJar: CookieJar;
+  environmentProfile: EnvironmentProfile;
   fetchImpl: FetchImpl;
 }
 
@@ -232,24 +239,57 @@ function createFingerprintUrl(path: string): string {
   return path.startsWith('http') ? path : `${SIGNIN_BASE_URL}${path}`;
 }
 
-function createSession(fetchImpl: FetchImpl): ApiSession {
+function createSession(
+  fetchImpl: FetchImpl,
+  environmentProfile: EnvironmentProfile
+): ApiSession {
   return {
     fetchImpl,
-    cookieJar: new CookieJar()
+    cookieJar: new CookieJar(),
+    environmentProfile
   };
 }
 
-function applySessionHeaders(
-  session: ApiSession,
-  url: URL,
-  initHeaders?: HeadersInit
-): Headers {
-  const headers = new Headers(initHeaders);
-  const cookieHeader = session.cookieJar.getCookieHeader(url);
-  if (cookieHeader) {
-    headers.set('cookie', cookieHeader);
+/**
+ * Merge session cookies and environment-derived defaults into a request header bag.
+ */
+export function buildSessionHeaders(options: {
+  cookieHeader?: string;
+  environmentProfile?: Pick<EnvironmentProfile, 'acceptLanguage' | 'userAgent'>;
+  initHeaders?: HeadersInit;
+}): Headers {
+  const headers = new Headers(options.initHeaders);
+
+  if (options.cookieHeader) {
+    const existingCookieHeader = headers.get('cookie');
+    headers.set(
+      'cookie',
+      existingCookieHeader
+        ? `${existingCookieHeader}; ${options.cookieHeader}`
+        : options.cookieHeader
+    );
   }
+
+  if (options.environmentProfile) {
+    if (!headers.has('user-agent')) {
+      headers.set('user-agent', options.environmentProfile.userAgent);
+    }
+
+    if (!headers.has('accept-language')) {
+      headers.set('accept-language', options.environmentProfile.acceptLanguage);
+    }
+  }
+
   return headers;
+}
+
+function applySessionHeaders(session: ApiSession, url: URL, initHeaders?: HeadersInit): Headers {
+  const cookieHeader = session.cookieJar.getCookieHeader(url);
+  return buildSessionHeaders({
+    initHeaders,
+    cookieHeader,
+    environmentProfile: session.environmentProfile
+  });
 }
 
 async function sessionRequest(
@@ -427,6 +467,7 @@ async function generateSessionFingerprint(
   url: string
 ): Promise<string> {
   return generateFingerprint({
+    environmentProfile: session.environmentProfile,
     fetchImpl: session.fetchImpl,
     url
   });
@@ -766,7 +807,27 @@ export async function autoRegisterViaApi(
   let currentStage = 'create-inbox';
 
   try {
-    const session = createSession(fetchContext.fetchImpl);
+    const egress = await fetchEgressInfo(fetchContext.fetchImpl);
+    const environmentProfile = resolveEnvironmentProfile(egress?.country);
+    const session = createSession(fetchContext.fetchImpl, environmentProfile);
+
+    if (egress?.ip || egress?.country || egress?.city || egress?.region) {
+      const egressSummary = [
+        egress.ip,
+        egress.country,
+        egress.region,
+        egress.city
+      ]
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+        .join(' / ');
+      logProgress(flowOptions.onProgress, `代理出口: ${egressSummary}`);
+    }
+
+    logProgress(
+      flowOptions.onProgress,
+      `自动环境画像: ${summarizeEnvironmentProfile(environmentProfile, egress?.country)}`
+    );
+
     const inboxLabel = flowOptions.registrationEmailMode === 'custom' ? '使用自定义邮箱' : '创建临时邮箱';
     logProgress(flowOptions.onProgress, `========== ${inboxLabel} ==========`);
     const inbox = await resolveInbox(fetchContext.fetchImpl, flowOptions);

@@ -57,3 +57,53 @@ test('buildRegistrationRedeemRequest chooses method and field names based on red
     }
   );
 });
+
+test('buildSessionHeaders applies region-aware user-agent and accept-language defaults', async () => {
+  const profileModule = (await import('./environmentProfile.ts').catch(() => null)) as
+    | {
+        resolveEnvironmentProfile: (countryCode?: string) => {
+          acceptLanguage: string;
+          userAgent: string;
+        };
+      }
+    | null;
+
+  assert.ok(profileModule, 'environmentProfile.ts should exist for header shaping');
+  if (!profileModule) {
+    return;
+  }
+
+  const registerModule = (await import('./kiroApiRegister.ts')) as unknown as {
+    buildSessionHeaders?: (options: {
+      cookieHeader?: string;
+      environmentProfile?: {
+        acceptLanguage: string;
+        userAgent: string;
+      };
+      initHeaders?: HeadersInit;
+    }) => Headers;
+  };
+
+  assert.equal(
+    typeof registerModule.buildSessionHeaders,
+    'function',
+    'kiroApiRegister.ts should export buildSessionHeaders'
+  );
+  if (typeof registerModule.buildSessionHeaders !== 'function') {
+    return;
+  }
+
+  const profile = profileModule.resolveEnvironmentProfile('DE');
+  const headers = registerModule.buildSessionHeaders({
+    cookieHeader: 'session=value',
+    environmentProfile: profile,
+    initHeaders: {
+      'x-trace-id': 'trace-1'
+    }
+  });
+
+  assert.equal(headers.get('cookie'), 'session=value');
+  assert.equal(headers.get('user-agent'), profile.userAgent);
+  assert.equal(headers.get('accept-language'), profile.acceptLanguage);
+  assert.equal(headers.get('x-trace-id'), 'trace-1');
+});

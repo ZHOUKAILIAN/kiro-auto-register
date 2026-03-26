@@ -10,7 +10,12 @@ interface RunRegisterDiagnosticsOptions {
   createInboxFn?: (options: { fetchImpl?: FetchImpl }) => Promise<TempmailInbox>;
 }
 
-async function fetchEgressInfo(fetchImpl: FetchImpl): Promise<RegisterDiagnostics['egress'] | undefined> {
+/**
+ * Read best-effort proxy egress metadata without failing the caller.
+ */
+export async function fetchEgressInfo(
+  fetchImpl: FetchImpl
+): Promise<RegisterDiagnostics['egress'] | undefined> {
   try {
     const response = await fetchImpl('https://ipinfo.io/json');
     if (!response.ok) {
