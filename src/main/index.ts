@@ -7,6 +7,12 @@ import { join } from 'path';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import Store from 'electron-store';
 import { autoRegister, type RegisterResult } from '../services/kiroRegister.ts';
+import {
+  createBrowserObservationSummary,
+  isInterestingObservationUrl,
+  pushBrowserObservationEvent,
+  pushBrowserObservationHit
+} from '../services/browserObservation.ts';
 import { buildExportPayload } from '../services/accountFormats.ts';
 import {
   probeOutlookMailbox,
@@ -27,6 +33,7 @@ import { normalizeOptionalProxyUrl } from '../shared/registerDiagnosticsUi.ts';
 import type {
   AppSettings,
   BatchRegisterResult,
+  BrowserObservationSummary,
   ManualOtpSubmitResult,
   RegisterDiagnostics,
   RegisterOptions,
@@ -53,7 +60,9 @@ const store = new Store<StoreSchema>({
 }) as unknown as TypedStore;
 
 let mainWindow: BrowserWindow | null = null;
+let browserObservationWindow: BrowserWindow | null = null;
 const registerRuntime = new RegisterRuntimeController();
+const OBSERVATION_START_URL = 'https://profile.aws.amazon.com/#/signup/start';
 
 function resolvePreloadPath(): string {
   if (typeof __dirname === 'string') {
@@ -69,6 +78,36 @@ function emitProgress(message: string): void {
 
 function emitRegisterRuntimeState(): void {
   mainWindow?.webContents.send('register-runtime-state', registerRuntime.getState());
+}
+
+function updateLatestDiagnostics(
+  updater: (current: RegisterDiagnostics | undefined) => RegisterDiagnostics
+): RegisterDiagnostics {
+  const current = registerRuntime.getState().latestDiagnostics;
+  const next = updater(current);
+  registerRuntime.setDiagnostics(next);
+  emitRegisterRuntimeState();
+  return next;
+}
+
+function setBrowserObservationSummary(summary: BrowserObservationSummary): BrowserObservationSummary {
+  updateLatestDiagnostics((current) => ({
+    executedAt: current?.executedAt ?? Date.now(),
+    proxyUrl: current?.proxyUrl,
+    egress: current?.egress,
+    tempmail: current?.tempmail ?? {
+      success: false,
+      message: '尚未运行链路诊断'
+    },
+    managedEmail: current?.managedEmail,
+    mailbox: current?.mailbox,
+    registrationProbe: current?.registrationProbe,
+    registrationComparisons: current?.registrationComparisons,
+    browserObservation: summary,
+    aws: current?.aws
+  }));
+
+  return summary;
 }
 
 function createWindow(): void {
@@ -227,6 +266,219 @@ async function resolveOutlookMailboxOtp(input: {
   return result.code;
 }
 
+async function startBrowserObservation(
+  settings: AppSettings
+): Promise<BrowserObservationSummary> {
+  if (browserObservationWindow && !browserObservationWindow.isDestroyed()) {
+    browserObservationWindow.focus();
+    return (
+      registerRuntime.getState().latestDiagnostics?.browserObservation ??
+      setBrowserObservationSummary(createBrowserObservationSummary())
+    );
+  }
+
+  browserObservationWindow = new BrowserWindow({
+    width: 1280,
+    height: 900,
+    minWidth: 960,
+    minHeight: 720,
+    autoHideMenuBar: true,
+    webPreferences: {
+      sandbox: false,
+      contextIsolation: true
+    }
+  });
+
+  let summary = setBrowserObservationSummary(createBrowserObservationSummary());
+  const requestUrls = new Map<string, string>();
+
+  const pushEvent = (message: string): void => {
+    summary = pushBrowserObservationEvent(summary, message);
+    setBrowserObservationSummary(summary);
+    emitProgress(`[浏览器观察] ${message}`);
+  };
+
+  const pushHit = (hit: BrowserObservationSummary['latestNetworkHits'][number]): void => {
+    summary = pushBrowserObservationHit(summary, hit);
+    setBrowserObservationSummary(summary);
+  };
+
+  const configuredProxy = normalizeOptionalProxyUrl(settings.proxyUrl);
+  if (configuredProxy) {
+    pushEvent(`当前观察窗口走 Electron 默认网络栈；如需代理请确保系统/VPN 已生效 (${configuredProxy})`);
+  }
+
+  browserObservationWindow.on('closed', () => {
+    if (browserObservationWindow?.webContents.debugger.isAttached()) {
+      try {
+        browserObservationWindow.webContents.debugger.detach();
+      } catch {
+        // ignore detach failures during teardown
+      }
+    }
+
+    browserObservationWindow = null;
+    summary = {
+      ...summary,
+      active: false
+    };
+    setBrowserObservationSummary(summary);
+    emitProgress('[浏览器观察] 窗口已关闭');
+  });
+
+  browserObservationWindow.webContents.on('console-message', (_event, level, message) => {
+    pushEvent(`console[${level}]: ${message}`);
+    pushHit({
+      type: 'console',
+      detail: message,
+      timestamp: Date.now()
+    });
+  });
+
+  browserObservationWindow.webContents.on('did-start-navigation', (_event, url, _isInPlace, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+
+    pushEvent(`开始导航: ${url}`);
+    pushHit({
+      type: 'navigation',
+      url,
+      detail: 'did-start-navigation',
+      timestamp: Date.now()
+    });
+  });
+
+  browserObservationWindow.webContents.on('will-redirect', (_event, url) => {
+    pushEvent(`发生重定向: ${url}`);
+    pushHit({
+      type: 'redirect',
+      url,
+      detail: 'will-redirect',
+      timestamp: Date.now()
+    });
+  });
+
+  browserObservationWindow.webContents.on('did-navigate', (_event, url) => {
+    pushEvent(`已导航到: ${url}`);
+    pushHit({
+      type: 'navigation',
+      url,
+      detail: 'did-navigate',
+      timestamp: Date.now()
+    });
+  });
+
+  browserObservationWindow.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) {
+        return;
+      }
+
+      pushEvent(`页面加载失败: ${errorCode} ${errorDescription} (${validatedURL})`);
+      pushHit({
+        type: 'failure',
+        url: validatedURL,
+        detail: `${errorCode} ${errorDescription}`,
+        timestamp: Date.now()
+      });
+    }
+  );
+
+  browserObservationWindow.webContents.on('page-title-updated', (event, title) => {
+    event.preventDefault();
+    summary = {
+      ...summary,
+      lastTitle: title
+    };
+    setBrowserObservationSummary(summary);
+    pushEvent(`页面标题: ${title}`);
+  });
+
+  try {
+    browserObservationWindow.webContents.debugger.attach('1.3');
+    await browserObservationWindow.webContents.debugger.sendCommand('Network.enable');
+    pushEvent('已附加浏览器 Network 调试器');
+
+    browserObservationWindow.webContents.debugger.on(
+      'message',
+      (_event, method: string, params: Record<string, unknown>) => {
+        if (method === 'Network.requestWillBeSent') {
+          const request = (params.request as Record<string, unknown> | undefined) ?? {};
+          const url = typeof request.url === 'string' ? request.url : undefined;
+          const requestId = typeof params.requestId === 'string' ? params.requestId : undefined;
+          if (requestId && url) {
+            requestUrls.set(requestId, url);
+          }
+
+          if (url && isInterestingObservationUrl(url)) {
+            pushHit({
+              type: 'request',
+              url,
+              detail: typeof request.method === 'string' ? request.method : 'request',
+              timestamp: Date.now()
+            });
+          }
+
+          const redirectResponse = params.redirectResponse as
+            | Record<string, unknown>
+            | undefined;
+          if (redirectResponse && url && isInterestingObservationUrl(url)) {
+            pushHit({
+              type: 'redirect',
+              url,
+              status:
+                typeof redirectResponse.status === 'number'
+                  ? redirectResponse.status
+                  : undefined,
+              detail: 'Network.requestWillBeSent redirect',
+              timestamp: Date.now()
+            });
+          }
+        }
+
+        if (method === 'Network.responseReceived') {
+          const response = (params.response as Record<string, unknown> | undefined) ?? {};
+          const url = typeof response.url === 'string' ? response.url : undefined;
+          if (url && isInterestingObservationUrl(url)) {
+            pushHit({
+              type: 'response',
+              url,
+              status: typeof response.status === 'number' ? response.status : undefined,
+              detail: typeof response.mimeType === 'string' ? response.mimeType : 'response',
+              timestamp: Date.now()
+            });
+          }
+        }
+
+        if (method === 'Network.loadingFailed') {
+          const requestId = typeof params.requestId === 'string' ? params.requestId : undefined;
+          const url = requestId ? requestUrls.get(requestId) : undefined;
+          const errorText =
+            typeof params.errorText === 'string' ? params.errorText : 'Network loading failed';
+
+          if (url && isInterestingObservationUrl(url)) {
+            pushHit({
+              type: 'failure',
+              url,
+              detail: errorText,
+              timestamp: Date.now()
+            });
+          }
+        }
+      }
+    );
+  } catch (error) {
+    pushEvent(`附加浏览器调试器失败: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  await browserObservationWindow.loadURL(OBSERVATION_START_URL);
+  pushEvent(`已打开观察页: ${OBSERVATION_START_URL}`);
+
+  return summary;
+}
+
 async function runRegisterWorkflow(options: RegisterOptions): Promise<BatchRegisterResult> {
   const total = Math.max(1, Math.floor(options.count || 1));
   const results: RegisterTaskResult[] = [];
@@ -377,6 +629,7 @@ function setupIPCHandlers(): void {
         ...getSettings(),
         ...nextSettings
       });
+      const currentBrowserObservation = registerRuntime.getState().latestDiagnostics?.browserObservation;
       const diagnostics = await runRegisterDiagnostics({
         proxyUrl: normalizeOptionalProxyUrl(settings.proxyUrl),
         lastFailure: registerRuntime.getState().lastFailure,
@@ -403,9 +656,26 @@ function setupIPCHandlers(): void {
             : undefined,
         probeOutlookMailboxFn: probeOutlookMailbox
       });
-      registerRuntime.setDiagnostics(diagnostics);
+      registerRuntime.setDiagnostics({
+        ...diagnostics,
+        browserObservation: currentBrowserObservation
+      });
       emitRegisterRuntimeState();
-      return diagnostics;
+      return {
+        ...diagnostics,
+        browserObservation: currentBrowserObservation
+      };
+    }
+  );
+
+  ipcMain.handle(
+    'start-browser-observation',
+    async (_event, nextSettings?: Partial<AppSettings>): Promise<BrowserObservationSummary> => {
+      const settings = normalizeSettings({
+        ...getSettings(),
+        ...nextSettings
+      });
+      return startBrowserObservation(settings);
     }
   );
 

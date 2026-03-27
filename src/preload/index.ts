@@ -8,6 +8,7 @@ import { electronAPI } from '@electron-toolkit/preload';
 import type {
   AppSettings,
   BatchRegisterResult,
+  BrowserObservationSummary,
   ManualOtpSubmitResult,
   RegisterDiagnostics,
   RegisterOptions,
@@ -29,6 +30,8 @@ const api = {
     ipcRenderer.invoke('submit-register-otp', taskId, otp),
   runRegisterDiagnostics: (settings?: Partial<AppSettings>): Promise<RegisterDiagnostics> =>
     ipcRenderer.invoke('run-register-diagnostics', settings),
+  startBrowserObservation: (settings?: Partial<AppSettings>): Promise<BrowserObservationSummary> =>
+    ipcRenderer.invoke('start-browser-observation', settings),
   onRegisterProgress: (callback: (message: string) => void): void => {
     ipcRenderer.on('register-progress', (_event, message: string) => callback(message));
   },

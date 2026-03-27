@@ -30,6 +30,7 @@ import type {
   OtpMode,
   RegistrationEmailMode,
   RegistrationProbeClassification,
+  RegistrationStageTrace,
   RegistrationProbeSummary
 } from '../shared/contracts.ts';
 
@@ -127,6 +128,25 @@ interface RegistrationProbeOptions {
   onProgress?: (message: string) => void;
 }
 
+class RequestStageError extends Error {
+  readonly status: number;
+  readonly requestUrl: string;
+  readonly responseText: string;
+
+  constructor(options: {
+    message: string;
+    status: number;
+    requestUrl: string;
+    responseText: string;
+  }) {
+    super(options.message);
+    this.name = 'RequestStageError';
+    this.status = options.status;
+    this.requestUrl = options.requestUrl;
+    this.responseText = options.responseText;
+  }
+}
+
 const DEFAULT_PASSWORD = 'KiroAuto123!@#';
 const DIRECTORY_ID = 'd-9067642ac7';
 const PROFILE_BASE_URL = 'https://profile.aws.amazon.com';
@@ -213,6 +233,15 @@ function classifyRegistrationProbeMessage(
   }
 
   return 'failed';
+}
+
+function truncateResponseSnippet(value: string, maxLength: number = 240): string {
+  const normalized = value.trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
 function generateRandomName(): string {
@@ -395,9 +424,12 @@ async function requestJsonOrThrow(
   const result = await sessionRequest(session, url, init);
 
   if (!result.response.ok) {
-    throw new Error(
-      `${errorPrefix}: HTTP ${result.response.status}${result.text ? ` ${result.text}` : ''}`
-    );
+    throw new RequestStageError({
+      message: `${errorPrefix}: HTTP ${result.response.status}${result.text ? ` ${result.text}` : ''}`,
+      status: result.response.status,
+      requestUrl: url,
+      responseText: result.text
+    });
   }
 
   return toObject(result.json);
@@ -883,11 +915,25 @@ export async function probeRegistrationPath(
   const environmentProfile = resolveEnvironmentProfile(options.country);
   const session = createSession(options.fetchImpl, environmentProfile);
   let currentStage = 'prepare-profile-workflow';
+  const stageTrace: RegistrationStageTrace[] = [];
+  let lastRequestUrl: string | undefined;
+  let lastHttpStatus: number | undefined;
+  let lastResponseSnippet: string | undefined;
+
+  function recordStage(stage: string, ok: boolean, detail: string): void {
+    stageTrace.push({
+      stage,
+      ok,
+      detail,
+      timestamp: Date.now()
+    });
+  }
 
   try {
+    const environmentSummary = summarizeEnvironmentProfile(environmentProfile, options.country);
     logProgress(
       options.onProgress,
-      `注册探针环境画像: ${summarizeEnvironmentProfile(environmentProfile, options.country)}`
+      `注册探针环境画像: ${environmentSummary}`
     );
 
     logProgress(options.onProgress, '========== 初始化 AWS 纯接口注册 ==========');
@@ -895,6 +941,7 @@ export async function probeRegistrationPath(
       profileRedirectUrl,
       profileWorkflowId
     } = await prepareProfileWorkflow(session, options.email);
+    recordStage('prepare-profile-workflow', true, '已拿到 profile workflow');
     logProgress(options.onProgress, `profile workflowID: ${profileWorkflowId}`);
 
     currentStage = 'start-profile-signup';
@@ -903,9 +950,11 @@ export async function probeRegistrationPath(
       profileWorkflowState,
       profileUbid
     } = await startProfileSignup(session, profileRedirectUrl, profileWorkflowId);
+    recordStage('start-profile-signup', true, `workflowState=${profileWorkflowState}`);
 
     currentStage = 'send-otp';
     logProgress(options.onProgress, '========== 发送邮箱验证码 ==========');
+    lastRequestUrl = buildApiUrl('/send-otp');
     await sendProfileOtp(
       session,
       profileRedirectUrl,
@@ -913,26 +962,51 @@ export async function probeRegistrationPath(
       options.email,
       profileUbid
     );
+    lastHttpStatus = 200;
+    lastResponseSnippet = 'OTP trigger accepted';
+    recordStage('send-otp', true, '已成功触发 OTP 发送');
 
     return {
       success: true,
       stage: currentStage,
       message: '已成功触发 OTP 发送，可继续等待邮箱验证码',
       email: options.email,
-      classification: 'reachable'
+      classification: 'reachable',
+      evidence: {
+        environmentSummary,
+        httpStatus: lastHttpStatus,
+        requestUrl: lastRequestUrl,
+        responseSnippet: lastResponseSnippet,
+        cookieNames: session.cookieJar.listNames(),
+        stageTrace
+      }
     };
   } catch (error) {
     const errorDetail = formatErrorDetails(error);
+    recordStage(currentStage, false, errorDetail);
     logProgress(
       options.onProgress,
       `⚠ 注册探针在阶段 ${formatStageName(currentStage)} 失败: ${errorDetail}`
     );
+    const environmentSummary = summarizeEnvironmentProfile(environmentProfile, options.country);
+    const requestStageError = error instanceof RequestStageError ? error : undefined;
     return {
       success: false,
       stage: currentStage,
       message: errorDetail,
       email: options.email,
-      classification: classifyRegistrationProbeMessage(errorDetail)
+      classification: classifyRegistrationProbeMessage(errorDetail),
+      evidence: {
+        environmentSummary,
+        httpStatus: requestStageError?.status ?? lastHttpStatus,
+        requestUrl: requestStageError?.requestUrl ?? lastRequestUrl,
+        responseSnippet:
+          requestStageError?.responseText
+            ? truncateResponseSnippet(requestStageError.responseText)
+            : lastResponseSnippet,
+        cookieNames: session.cookieJar.listNames(),
+        stageTrace
+      }
     };
   }
 }

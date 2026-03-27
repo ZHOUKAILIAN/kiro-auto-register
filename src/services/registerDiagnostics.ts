@@ -9,6 +9,7 @@ import {
 } from './outlookMailbox.ts';
 import { createInbox, type TempmailInbox } from './tempmail.ts';
 import type {
+  RegistrationComparison,
   MailboxProvider,
   ManagedEmailProvider,
   RegisterDiagnostics,
@@ -99,6 +100,7 @@ export async function runRegisterDiagnostics(
     let tempmail: RegisterDiagnostics['tempmail'];
     let tempmailInboxEmail: string | undefined;
     let registrationProbe: RegistrationProbeSummary | undefined;
+    const registrationComparisons: RegistrationComparison[] = [];
 
     if (options.managedEmailConfig?.provider === 'moemail-api') {
       const probeResult = await probeManagedEmailFn({
@@ -158,28 +160,66 @@ export async function runRegisterDiagnostics(
     }
 
     const customEmailAddress = options.customEmailAddress?.trim();
-    const probeEmail =
-      options.registrationEmailMode === 'custom' && customEmailAddress
-        ? customEmailAddress
-        : tempmailInboxEmail;
+    const candidates: Array<{
+      label: string;
+      email: string;
+      source: RegistrationEmailMode;
+    }> = [];
 
-    if (probeEmail) {
+    if (tempmailInboxEmail) {
+      candidates.push({
+        label: 'Tempmail',
+        email: tempmailInboxEmail,
+        source: 'tempmail'
+      });
+    }
+
+    if (
+      customEmailAddress &&
+      !candidates.some((candidate) => candidate.email === customEmailAddress)
+    ) {
+      candidates.push({
+        label: '自定义邮箱',
+        email: customEmailAddress,
+        source: 'custom'
+      });
+    }
+
+    for (const candidate of candidates) {
       try {
-        registrationProbe = await probeRegistrationFn({
+        const result = await probeRegistrationFn({
           fetchImpl,
-          email: probeEmail,
+          email: candidate.email,
           country: egress?.country
         });
+        registrationComparisons.push({
+          label: candidate.label,
+          email: candidate.email,
+          source: candidate.source,
+          result
+        });
       } catch (error) {
-        registrationProbe = {
-          success: false,
-          stage: 'probe',
-          message: `注册探测失败: ${formatErrorDetails(error)}`,
-          email: probeEmail,
-          classification: 'failed'
-        };
+        registrationComparisons.push({
+          label: candidate.label,
+          email: candidate.email,
+          source: candidate.source,
+          result: {
+            success: false,
+            stage: 'probe',
+            message: `注册探测失败: ${formatErrorDetails(error)}`,
+            email: candidate.email,
+            classification: 'failed'
+          }
+        });
       }
     }
+
+    const preferredSource = options.registrationEmailMode === 'custom' ? 'custom' : 'tempmail';
+    registrationProbe =
+      registrationComparisons.find(
+        (comparison) => comparison.source === preferredSource && comparison.result
+      )?.result ??
+      registrationComparisons.find((comparison) => comparison.result)?.result;
 
     return {
       executedAt: Date.now(),
@@ -200,6 +240,7 @@ export async function runRegisterDiagnostics(
       mailbox,
       tempmail,
       registrationProbe,
+      registrationComparisons: registrationComparisons.length > 0 ? registrationComparisons : undefined,
       aws: options.lastFailure
         ? {
             stage: options.lastFailure.stage,

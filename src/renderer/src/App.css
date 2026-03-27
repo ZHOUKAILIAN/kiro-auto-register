@@ -444,6 +444,28 @@ select {
   line-height: 1.55;
 }
 
+.diagnostic-detail-block {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(31, 42, 36, 0.06);
+}
+
+.diagnostic-detail-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.diagnostic-detail-line {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
 .otp-copy {
   margin: 0 0 14px;
   color: var(--muted);

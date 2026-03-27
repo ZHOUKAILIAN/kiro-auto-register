@@ -32,6 +32,60 @@ export class RegisterRuntimeController {
               ? { ...this.state.latestDiagnostics.egress }
               : undefined,
             tempmail: { ...this.state.latestDiagnostics.tempmail },
+            managedEmail: this.state.latestDiagnostics.managedEmail
+              ? { ...this.state.latestDiagnostics.managedEmail }
+              : undefined,
+            mailbox: this.state.latestDiagnostics.mailbox
+              ? { ...this.state.latestDiagnostics.mailbox }
+              : undefined,
+            registrationProbe: this.state.latestDiagnostics.registrationProbe
+              ? {
+                  ...this.state.latestDiagnostics.registrationProbe,
+                  evidence: this.state.latestDiagnostics.registrationProbe.evidence
+                    ? {
+                        ...this.state.latestDiagnostics.registrationProbe.evidence,
+                        cookieNames: this.state.latestDiagnostics.registrationProbe.evidence.cookieNames
+                          ? [...this.state.latestDiagnostics.registrationProbe.evidence.cookieNames]
+                          : undefined,
+                        stageTrace: this.state.latestDiagnostics.registrationProbe.evidence.stageTrace.map(
+                          (entry) => ({ ...entry })
+                        )
+                      }
+                    : undefined
+                }
+              : undefined,
+            registrationComparisons: this.state.latestDiagnostics.registrationComparisons?.map(
+              (comparison) => ({
+                ...comparison,
+                result: comparison.result
+                  ? {
+                      ...comparison.result,
+                      evidence: comparison.result.evidence
+                        ? {
+                            ...comparison.result.evidence,
+                            cookieNames: comparison.result.evidence.cookieNames
+                              ? [...comparison.result.evidence.cookieNames]
+                              : undefined,
+                            stageTrace: comparison.result.evidence.stageTrace.map((entry) => ({
+                              ...entry
+                            }))
+                          }
+                        : undefined
+                    }
+                  : undefined
+              })
+            ),
+            browserObservation: this.state.latestDiagnostics.browserObservation
+              ? {
+                  ...this.state.latestDiagnostics.browserObservation,
+                  latestInterestingEvents: [
+                    ...this.state.latestDiagnostics.browserObservation.latestInterestingEvents
+                  ],
+                  latestNetworkHits: this.state.latestDiagnostics.browserObservation.latestNetworkHits.map(
+                    (hit) => ({ ...hit })
+                  )
+                }
+              : undefined,
             aws: this.state.latestDiagnostics.aws ? { ...this.state.latestDiagnostics.aws } : undefined
           }
         : undefined,

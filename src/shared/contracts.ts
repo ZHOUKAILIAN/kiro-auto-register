@@ -83,12 +83,55 @@ export type RegistrationProbeClassification =
   | 'network-error'
   | 'failed';
 
+export interface RegistrationStageTrace {
+  stage: string;
+  ok: boolean;
+  detail: string;
+  timestamp: number;
+}
+
+export interface RegistrationProbeEvidence {
+  environmentSummary?: string;
+  httpStatus?: number;
+  requestUrl?: string;
+  responseSnippet?: string;
+  cookieNames?: string[];
+  stageTrace: RegistrationStageTrace[];
+}
+
 export interface RegistrationProbeSummary {
   success: boolean;
   stage: string;
   message: string;
   email?: string;
   classification: RegistrationProbeClassification;
+  evidence?: RegistrationProbeEvidence;
+}
+
+export interface RegistrationComparison {
+  label: string;
+  email: string;
+  source: RegistrationEmailMode;
+  result?: RegistrationProbeSummary;
+  skippedReason?: string;
+}
+
+export interface BrowserObservationNetworkHit {
+  type: 'request' | 'response' | 'failure' | 'redirect' | 'navigation' | 'console';
+  url?: string;
+  status?: number;
+  detail: string;
+  timestamp: number;
+}
+
+export interface BrowserObservationSummary {
+  active: boolean;
+  startedAt: number;
+  currentUrl?: string;
+  lastTitle?: string;
+  lastError?: string;
+  latestInterestingEvents: string[];
+  latestNetworkHits: BrowserObservationNetworkHit[];
 }
 
 export interface RegisterDiagnostics {
@@ -119,6 +162,8 @@ export interface RegisterDiagnostics {
     email?: string;
   };
   registrationProbe?: RegistrationProbeSummary;
+  registrationComparisons?: RegistrationComparison[];
+  browserObservation?: BrowserObservationSummary;
   aws?: {
     stage: string;
     message: string;

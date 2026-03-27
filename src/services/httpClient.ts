@@ -206,6 +206,16 @@ export class CookieJar {
 
     return values.length > 0 ? values.join('; ') : undefined;
   }
+
+  listNames(): string[] {
+    return Array.from(
+      new Set(
+        this.cookies
+          .filter((cookie) => !isExpired(cookie))
+          .map((cookie) => cookie.name)
+      )
+    ).sort();
+  }
 }
 
 type ProxyEnvironment = Record<string, string | undefined>;

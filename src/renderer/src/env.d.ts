@@ -3,6 +3,7 @@
 import type {
   AppSettings,
   BatchRegisterResult,
+  BrowserObservationSummary,
   ManualOtpSubmitResult,
   RegisterDiagnostics,
   RegisterOptions,
@@ -22,6 +23,7 @@ declare global {
       getRegisterRuntimeState: () => Promise<RegisterRuntimeState>;
       submitRegisterOtp: (taskId: string, otp: string) => Promise<ManualOtpSubmitResult>;
       runRegisterDiagnostics: (settings?: Partial<AppSettings>) => Promise<RegisterDiagnostics>;
+      startBrowserObservation: (settings?: Partial<AppSettings>) => Promise<BrowserObservationSummary>;
       onRegisterProgress: (callback: (message: string) => void) => void;
       removeRegisterProgressListener: () => void;
       onRegisterRuntimeState: (callback: (state: RegisterRuntimeState) => void) => void;

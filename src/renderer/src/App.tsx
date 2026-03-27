@@ -7,6 +7,8 @@ import {
   buildRegisterStartupMessages
 } from '../../shared/registerProgressUi.ts';
 import {
+  getRegistrationComparisonSummary,
+  getRegistrationEvidenceSummary,
   getRegistrationProbeAvailabilityLabel,
   getRegistrationProbeMessage,
   getTempmailAvailabilityLabel
@@ -55,7 +57,7 @@ function App() {
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [runtimeState, setRuntimeState] = useState<RegisterRuntimeState>({ isRegistering: false });
-  const [busyAction, setBusyAction] = useState<'export' | 'diagnostics' | 'save' | null>(null);
+  const [busyAction, setBusyAction] = useState<'export' | 'diagnostics' | 'browser' | 'save' | null>(null);
   const [progress, setProgress] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showSettings, setShowSettings] = useState(true);
@@ -224,6 +226,22 @@ function App() {
     }
   }
 
+  async function handleStartBrowserObservation(): Promise<void> {
+    setBusyAction('browser');
+    try {
+      const summary = await window.api.startBrowserObservation(settings);
+      setFlashMessage(
+        summary.active
+          ? '浏览器观察窗口已启动，可在新窗口中手动操作并回到日志面板查看事件'
+          : '浏览器观察未能启动'
+      );
+    } catch (error) {
+      setFlashMessage(`启动浏览器观察失败：${toErrorMessage(error)}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleDeleteSelected(): Promise<void> {
     if (selectedIds.size === 0) {
       setFlashMessage('请先选择要删除的账号');
@@ -306,6 +324,10 @@ function App() {
   function renderDiagnosticsSummary(result: RegisterDiagnostics | undefined): string {
     if (!result) {
       return '还没有运行诊断';
+    }
+
+    if (result.browserObservation?.active) {
+      return `浏览器观察中 · ${result.browserObservation.currentUrl || '等待导航'}`;
     }
 
     if (result.registrationProbe) {
@@ -592,6 +614,14 @@ function App() {
               {busyAction === 'diagnostics' ? '诊断中...' : '运行诊断'}
             </button>
             <button
+              className="secondary-button"
+              type="button"
+              disabled={busyAction === 'browser'}
+              onClick={handleStartBrowserObservation}
+            >
+              {busyAction === 'browser' ? '启动中...' : '浏览器观察'}
+            </button>
+            <button
               className="danger-button"
               type="button"
               disabled={!hasSelectedAccounts}
@@ -654,6 +684,15 @@ function App() {
                     : getRegistrationProbeMessage(diagnostics)}
                 </p>
               </div>
+              <div className="diagnostic-item">
+                <span className="diagnostic-label">探针证据</span>
+                <strong>
+                  {diagnostics?.registrationProbe?.evidence?.httpStatus
+                    ? `HTTP ${diagnostics.registrationProbe.evidence.httpStatus}`
+                    : '待补充'}
+                </strong>
+                <p>{getRegistrationEvidenceSummary(diagnostics?.registrationProbe)}</p>
+              </div>
               {settings.registrationEmailMode === 'tempmail' &&
               settings.managedEmailProvider === 'moemail-api' ? (
                 <div className="diagnostic-item">
@@ -696,7 +735,78 @@ function App() {
                   </p>
                 </div>
               ) : null}
+              <div className="diagnostic-item">
+                <span className="diagnostic-label">浏览器观察</span>
+                <strong>
+                  {diagnostics?.browserObservation
+                    ? diagnostics.browserObservation.active
+                      ? '观察中'
+                      : '已结束'
+                    : '未启动'}
+                </strong>
+                <p>
+                  {diagnostics?.browserObservation?.lastError ||
+                    diagnostics?.browserObservation?.currentUrl ||
+                    '点击“浏览器观察”打开真实页面并采集导航/网络事件'}
+                </p>
+              </div>
             </div>
+
+            {diagnostics?.registrationComparisons?.length ? (
+              <div className="diagnostic-detail-block">
+                <span className="diagnostic-label">邮箱来源对比</span>
+                <div className="diagnostic-detail-list">
+                  {getRegistrationComparisonSummary(diagnostics).map((line) => (
+                    <div key={line} className="diagnostic-detail-line">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {diagnostics?.registrationProbe?.evidence?.stageTrace?.length ? (
+              <div className="diagnostic-detail-block">
+                <span className="diagnostic-label">探针阶段时间线</span>
+                <div className="diagnostic-detail-list">
+                  {diagnostics.registrationProbe.evidence.stageTrace.map((entry) => (
+                    <div
+                      key={`${entry.stage}-${entry.timestamp}`}
+                      className="diagnostic-detail-line"
+                    >
+                      {`${entry.ok ? '✓' : '⚠'} ${entry.stage}: ${entry.detail}`}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {diagnostics?.registrationProbe?.evidence?.responseSnippet ? (
+              <div className="diagnostic-detail-block">
+                <span className="diagnostic-label">响应摘要</span>
+                <div className="diagnostic-detail-list">
+                  <div className="diagnostic-detail-line">
+                    {diagnostics.registrationProbe.evidence.responseSnippet}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {diagnostics?.browserObservation?.latestNetworkHits?.length ? (
+              <div className="diagnostic-detail-block">
+                <span className="diagnostic-label">浏览器观察事件</span>
+                <div className="diagnostic-detail-list">
+                  {diagnostics.browserObservation.latestNetworkHits.map((hit, index) => (
+                    <div
+                      key={`${hit.timestamp}-${hit.type}-${index}`}
+                      className="diagnostic-detail-line"
+                    >
+                      {`${hit.type}${typeof hit.status === 'number' ? ` ${hit.status}` : ''} · ${hit.url || hit.detail}`}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {pendingOtp ? (

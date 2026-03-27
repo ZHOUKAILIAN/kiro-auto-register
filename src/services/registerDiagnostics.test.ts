@@ -226,3 +226,137 @@ test('runRegisterDiagnostics skips registration probe when tempmail creation fai
   assert.equal(probeCallCount, 0);
   assert.equal(diagnostics.registrationProbe, undefined);
 });
+
+test('runRegisterDiagnostics compares tempmail and custom email probes and prefers the active email mode', async () => {
+  const probeEmails: string[] = [];
+
+  const diagnostics = await runRegisterDiagnostics({
+    proxyUrl: 'http://proxy.example:8080',
+    registrationEmailMode: 'custom',
+    customEmailAddress: 'owner@example.com',
+    fetchImpl: async () =>
+      Response.json({
+        ip: '66.93.67.200',
+        city: 'Los Angeles',
+        region: 'California',
+        country: 'US',
+        org: 'AS3257 GTT Communications Inc.'
+      }),
+    createInboxFn: async () => ({
+      email: 'diag@example.com',
+      token: 'diag-token',
+      createdAt: 1_764_000_000_000
+    }),
+    probeRegistrationFn: async ({ email }) => {
+      probeEmails.push(email);
+
+      return {
+        success: email === 'owner@example.com',
+        stage: 'send-otp',
+        message:
+          email === 'owner@example.com'
+            ? '已成功触发 OTP 发送，可继续等待邮箱验证码'
+            : '调用 profile /send-otp 失败: HTTP 400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}',
+        email,
+        classification: email === 'owner@example.com' ? 'reachable' : 'tes-blocked',
+        evidence: {
+          environmentSummary: 'USA / en-US / America/Los_Angeles (egress=US)',
+          httpStatus: email === 'owner@example.com' ? 200 : 400,
+          requestUrl: 'https://profile.aws.amazon.com/api/send-otp',
+          responseSnippet:
+            email === 'owner@example.com'
+              ? 'otp accepted'
+              : '{"errorCode":"BLOCKED","message":"Request was blocked by TES."}',
+          cookieNames: ['aws-user-profile-ubid'],
+          stageTrace: [
+            {
+              stage: 'prepare-profile-workflow',
+              ok: true,
+              detail: 'ok',
+              timestamp: 1_764_000_000_000
+            },
+            {
+              stage: 'send-otp',
+              ok: email === 'owner@example.com',
+              detail: email === 'owner@example.com' ? 'ok' : 'blocked',
+              timestamp: 1_764_000_000_500
+            }
+          ]
+        }
+      };
+    }
+  });
+
+  assert.deepEqual(probeEmails, ['diag@example.com', 'owner@example.com']);
+  assert.equal(diagnostics.registrationProbe?.email, 'owner@example.com');
+  assert.equal(diagnostics.registrationProbe?.classification, 'reachable');
+  assert.deepEqual(diagnostics.registrationComparisons, [
+    {
+      label: 'Tempmail',
+      email: 'diag@example.com',
+      source: 'tempmail',
+      result: {
+        success: false,
+        stage: 'send-otp',
+        message:
+          '调用 profile /send-otp 失败: HTTP 400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}',
+        email: 'diag@example.com',
+        classification: 'tes-blocked',
+        evidence: {
+          environmentSummary: 'USA / en-US / America/Los_Angeles (egress=US)',
+          httpStatus: 400,
+          requestUrl: 'https://profile.aws.amazon.com/api/send-otp',
+          responseSnippet: '{"errorCode":"BLOCKED","message":"Request was blocked by TES."}',
+          cookieNames: ['aws-user-profile-ubid'],
+          stageTrace: [
+            {
+              stage: 'prepare-profile-workflow',
+              ok: true,
+              detail: 'ok',
+              timestamp: 1_764_000_000_000
+            },
+            {
+              stage: 'send-otp',
+              ok: false,
+              detail: 'blocked',
+              timestamp: 1_764_000_000_500
+            }
+          ]
+        }
+      }
+    },
+    {
+      label: '自定义邮箱',
+      email: 'owner@example.com',
+      source: 'custom',
+      result: {
+        success: true,
+        stage: 'send-otp',
+        message: '已成功触发 OTP 发送，可继续等待邮箱验证码',
+        email: 'owner@example.com',
+        classification: 'reachable',
+        evidence: {
+          environmentSummary: 'USA / en-US / America/Los_Angeles (egress=US)',
+          httpStatus: 200,
+          requestUrl: 'https://profile.aws.amazon.com/api/send-otp',
+          responseSnippet: 'otp accepted',
+          cookieNames: ['aws-user-profile-ubid'],
+          stageTrace: [
+            {
+              stage: 'prepare-profile-workflow',
+              ok: true,
+              detail: 'ok',
+              timestamp: 1_764_000_000_000
+            },
+            {
+              stage: 'send-otp',
+              ok: true,
+              detail: 'ok',
+              timestamp: 1_764_000_000_500
+            }
+          ]
+        }
+      }
+    }
+  ]);
+});
