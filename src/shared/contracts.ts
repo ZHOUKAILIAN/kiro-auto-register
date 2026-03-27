@@ -77,6 +77,20 @@ export interface RegistrationFailureSummary {
   timestamp: number;
 }
 
+export type RegistrationProbeClassification =
+  | 'reachable'
+  | 'tes-blocked'
+  | 'network-error'
+  | 'failed';
+
+export interface RegistrationProbeSummary {
+  success: boolean;
+  stage: string;
+  message: string;
+  email?: string;
+  classification: RegistrationProbeClassification;
+}
+
 export interface RegisterDiagnostics {
   executedAt: number;
   proxyUrl?: string;
@@ -104,6 +118,7 @@ export interface RegisterDiagnostics {
     message: string;
     email?: string;
   };
+  registrationProbe?: RegistrationProbeSummary;
   aws?: {
     stage: string;
     message: string;

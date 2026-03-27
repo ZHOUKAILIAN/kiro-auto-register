@@ -15,7 +15,7 @@ import {
   createFetchContext,
   type FetchImpl
 } from './httpClient.ts';
-import { fetchEgressInfo } from './registerDiagnostics.ts';
+import { fetchEgressInfo } from './egressInfo.ts';
 import {
   createMoeMailInbox,
   waitForMoeMailVerificationCode
@@ -28,7 +28,9 @@ import {
 import type {
   ManagedEmailProvider,
   OtpMode,
-  RegistrationEmailMode
+  RegistrationEmailMode,
+  RegistrationProbeClassification,
+  RegistrationProbeSummary
 } from '../shared/contracts.ts';
 
 export interface RegisterResult {
@@ -118,6 +120,13 @@ interface ExistingInboxEnvironment {
   TEMPMAIL_REUSE_TOKEN?: string;
 }
 
+interface RegistrationProbeOptions {
+  fetchImpl: FetchImpl;
+  email: string;
+  country?: string;
+  onProgress?: (message: string) => void;
+}
+
 const DEFAULT_PASSWORD = 'KiroAuto123!@#';
 const DIRECTORY_ID = 'd-9067642ac7';
 const PROFILE_BASE_URL = 'https://profile.aws.amazon.com';
@@ -173,6 +182,37 @@ function formatStageName(stage: string): string {
   };
 
   return mapping[stage] || stage;
+}
+
+function classifyRegistrationProbeMessage(
+  message: string
+): RegistrationProbeClassification {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('request was blocked by tes') ||
+    normalized.includes('"errorcode":"blocked"') ||
+    normalized.includes('tes blocked')
+  ) {
+    return 'tes-blocked';
+  }
+
+  if (
+    normalized.includes('econnreset') ||
+    normalized.includes('und_err_socket') ||
+    normalized.includes('fetch failed') ||
+    normalized.includes('tls') ||
+    normalized.includes('socket') ||
+    normalized.includes('econnrefused') ||
+    normalized.includes('etimedout') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('eai_again') ||
+    normalized.includes('network')
+  ) {
+    return 'network-error';
+  }
+
+  return 'failed';
 }
 
 function generateRandomName(): string {
@@ -835,6 +875,66 @@ async function sendProfileOtp(
     },
     '调用 profile /send-otp 失败'
   );
+}
+
+export async function probeRegistrationPath(
+  options: RegistrationProbeOptions
+): Promise<RegistrationProbeSummary> {
+  const environmentProfile = resolveEnvironmentProfile(options.country);
+  const session = createSession(options.fetchImpl, environmentProfile);
+  let currentStage = 'prepare-profile-workflow';
+
+  try {
+    logProgress(
+      options.onProgress,
+      `注册探针环境画像: ${summarizeEnvironmentProfile(environmentProfile, options.country)}`
+    );
+
+    logProgress(options.onProgress, '========== 初始化 AWS 纯接口注册 ==========');
+    const {
+      profileRedirectUrl,
+      profileWorkflowId
+    } = await prepareProfileWorkflow(session, options.email);
+    logProgress(options.onProgress, `profile workflowID: ${profileWorkflowId}`);
+
+    currentStage = 'start-profile-signup';
+    logProgress(options.onProgress, '========== 启动 profile 注册 ==========');
+    const {
+      profileWorkflowState,
+      profileUbid
+    } = await startProfileSignup(session, profileRedirectUrl, profileWorkflowId);
+
+    currentStage = 'send-otp';
+    logProgress(options.onProgress, '========== 发送邮箱验证码 ==========');
+    await sendProfileOtp(
+      session,
+      profileRedirectUrl,
+      profileWorkflowState,
+      options.email,
+      profileUbid
+    );
+
+    return {
+      success: true,
+      stage: currentStage,
+      message: '已成功触发 OTP 发送，可继续等待邮箱验证码',
+      email: options.email,
+      classification: 'reachable'
+    };
+  } catch (error) {
+    const errorDetail = formatErrorDetails(error);
+    logProgress(
+      options.onProgress,
+      `⚠ 注册探针在阶段 ${formatStageName(currentStage)} 失败: ${errorDetail}`
+    );
+    return {
+      success: false,
+      stage: currentStage,
+      message: errorDetail,
+      email: options.email,
+      classification: classifyRegistrationProbeMessage(errorDetail)
+    };
+  }
 }
 
 async function createProfileIdentity(

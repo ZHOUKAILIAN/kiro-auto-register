@@ -152,3 +152,77 @@ test('runRegisterDiagnostics includes managed provider summary when MoeMail is s
     email: 'aws-bot@moemail.app'
   });
 });
+
+test('runRegisterDiagnostics includes registration probe summary when proxy can reach send-otp', async () => {
+  let probeCallCount = 0;
+
+  const diagnostics = await runRegisterDiagnostics({
+    proxyUrl: 'http://proxy.example:8080',
+    fetchImpl: async () =>
+      Response.json({
+        ip: '165.171.157.206',
+        city: 'Sierra Vista',
+        region: 'Arizona',
+        country: 'US',
+        org: 'AS15108 Allo Communications LLC'
+      }),
+    createInboxFn: async () => ({
+      email: 'diag@example.com',
+      token: 'diag-token',
+      createdAt: 1_764_000_000_000
+    }),
+    probeRegistrationFn: async ({ email, country }) => {
+      probeCallCount += 1;
+      assert.equal(email, 'diag@example.com');
+      assert.equal(country, 'US');
+      return {
+        success: false,
+        stage: 'send-otp',
+        message: '调用 profile /send-otp 失败: HTTP 400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}',
+        email,
+        classification: 'tes-blocked'
+      };
+    }
+  });
+
+  assert.equal(probeCallCount, 1);
+  assert.deepEqual(diagnostics.registrationProbe, {
+    success: false,
+    stage: 'send-otp',
+    message:
+      '调用 profile /send-otp 失败: HTTP 400 {"errorCode":"BLOCKED","message":"Request was blocked by TES."}',
+    email: 'diag@example.com',
+    classification: 'tes-blocked'
+  });
+});
+
+test('runRegisterDiagnostics skips registration probe when tempmail creation fails', async () => {
+  let probeCallCount = 0;
+
+  const diagnostics = await runRegisterDiagnostics({
+    proxyUrl: 'http://proxy.example:8080',
+    fetchImpl: async () =>
+      Response.json({
+        ip: '165.171.157.206',
+        city: 'Sierra Vista',
+        region: 'Arizona',
+        country: 'US',
+        org: 'AS15108 Allo Communications LLC'
+      }),
+    createInboxFn: async () => {
+      throw new Error('Tempmail upstream unavailable');
+    },
+    probeRegistrationFn: async () => {
+      probeCallCount += 1;
+      return {
+        success: true,
+        stage: 'send-otp',
+        message: 'ok',
+        classification: 'reachable'
+      };
+    }
+  });
+
+  assert.equal(probeCallCount, 0);
+  assert.equal(diagnostics.registrationProbe, undefined);
+});

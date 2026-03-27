@@ -1,5 +1,7 @@
 import { createFetchContext, type FetchImpl } from './httpClient.ts';
 import { formatErrorDetails } from './errorDetails.ts';
+import { fetchEgressInfo } from './egressInfo.ts';
+import { probeRegistrationPath } from './kiroApiRegister.ts';
 import { probeMoeMailProvider } from './moemail.ts';
 import {
   probeOutlookMailbox,
@@ -10,7 +12,9 @@ import type {
   MailboxProvider,
   ManagedEmailProvider,
   RegisterDiagnostics,
-  RegistrationFailureSummary
+  RegistrationEmailMode,
+  RegistrationFailureSummary,
+  RegistrationProbeSummary
 } from '../shared/contracts.ts';
 
 interface RunRegisterDiagnosticsOptions {
@@ -18,6 +22,8 @@ interface RunRegisterDiagnosticsOptions {
   lastFailure?: RegistrationFailureSummary;
   fetchImpl?: FetchImpl;
   createInboxFn?: (options: { fetchImpl?: FetchImpl }) => Promise<TempmailInbox>;
+  registrationEmailMode?: RegistrationEmailMode;
+  customEmailAddress?: string;
   managedEmailConfig?:
     | {
         provider: Extract<ManagedEmailProvider, 'tempmail.lol'>;
@@ -52,31 +58,12 @@ interface RunRegisterDiagnosticsOptions {
     clientId: string;
     refreshToken: string;
   }) => Promise<OutlookMailboxProbeResult>;
-}
-
-/**
- * Read best-effort proxy egress metadata without failing the caller.
- */
-export async function fetchEgressInfo(
-  fetchImpl: FetchImpl
-): Promise<RegisterDiagnostics['egress'] | undefined> {
-  try {
-    const response = await fetchImpl('https://ipinfo.io/json');
-    if (!response.ok) {
-      return undefined;
-    }
-
-    const payload = (await response.json()) as Record<string, unknown>;
-    return {
-      ip: typeof payload.ip === 'string' ? payload.ip : undefined,
-      city: typeof payload.city === 'string' ? payload.city : undefined,
-      region: typeof payload.region === 'string' ? payload.region : undefined,
-      country: typeof payload.country === 'string' ? payload.country : undefined,
-      org: typeof payload.org === 'string' ? payload.org : undefined
-    };
-  } catch {
-    return undefined;
-  }
+  probeRegistrationFn?: (options: {
+    fetchImpl: FetchImpl;
+    email: string;
+    country?: string;
+    onProgress?: (message: string) => void;
+  }) => Promise<RegistrationProbeSummary>;
 }
 
 export async function runRegisterDiagnostics(
@@ -88,6 +75,7 @@ export async function runRegisterDiagnostics(
   const fetchImpl = options.fetchImpl ?? fetchContext?.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const createInboxFn = options.createInboxFn ?? createInbox;
   const probeOutlookMailboxFn = options.probeOutlookMailboxFn ?? probeOutlookMailbox;
+  const probeRegistrationFn = options.probeRegistrationFn ?? probeRegistrationPath;
   const probeManagedEmailFn =
     options.probeManagedEmailFn ??
     (async (managedOptions: {
@@ -108,6 +96,9 @@ export async function runRegisterDiagnostics(
     const egress = await fetchEgressInfo(fetchImpl);
     let managedEmail: RegisterDiagnostics['managedEmail'];
     let mailbox: RegisterDiagnostics['mailbox'];
+    let tempmail: RegisterDiagnostics['tempmail'];
+    let tempmailInboxEmail: string | undefined;
+    let registrationProbe: RegistrationProbeSummary | undefined;
 
     if (options.managedEmailConfig?.provider === 'moemail-api') {
       const probeResult = await probeManagedEmailFn({
@@ -153,60 +144,69 @@ export async function runRegisterDiagnostics(
         fetchImpl
       });
 
-      return {
-        executedAt: Date.now(),
-        proxyUrl: options.proxyUrl,
-        egress,
-        managedEmail:
-          managedEmail ??
-          (options.managedEmailConfig?.provider === 'tempmail.lol'
-            ? {
-                provider: 'tempmail.lol',
-                success: true,
-                message: 'Tempmail provider 可用',
-                email: inbox.email
-              }
-            : undefined),
-        mailbox,
-        tempmail: {
-          success: true,
-          message: 'Tempmail 邮箱创建成功',
-          email: inbox.email
-        },
-        aws: options.lastFailure
-          ? {
-              stage: options.lastFailure.stage,
-              message: options.lastFailure.message
-            }
-          : undefined
+      tempmailInboxEmail = inbox.email;
+      tempmail = {
+        success: true,
+        message: 'Tempmail 邮箱创建成功',
+        email: inbox.email
       };
     } catch (error) {
-      return {
-        executedAt: Date.now(),
-        proxyUrl: options.proxyUrl,
-        egress,
-        managedEmail:
-          managedEmail ??
-          (options.managedEmailConfig?.provider === 'tempmail.lol'
-            ? {
-                provider: 'tempmail.lol',
-                success: false,
-                message: `Tempmail provider 不可用: ${formatErrorDetails(error)}`
-              }
-            : undefined),
-        mailbox,
-        tempmail: {
-          success: false,
-          message: `Tempmail 邮箱创建失败: ${formatErrorDetails(error)}`
-        },
-        aws: options.lastFailure
-          ? {
-              stage: options.lastFailure.stage,
-              message: options.lastFailure.message
-            }
-          : undefined
+      tempmail = {
+        success: false,
+        message: `Tempmail 邮箱创建失败: ${formatErrorDetails(error)}`
       };
     }
+
+    const customEmailAddress = options.customEmailAddress?.trim();
+    const probeEmail =
+      options.registrationEmailMode === 'custom' && customEmailAddress
+        ? customEmailAddress
+        : tempmailInboxEmail;
+
+    if (probeEmail) {
+      try {
+        registrationProbe = await probeRegistrationFn({
+          fetchImpl,
+          email: probeEmail,
+          country: egress?.country
+        });
+      } catch (error) {
+        registrationProbe = {
+          success: false,
+          stage: 'probe',
+          message: `注册探测失败: ${formatErrorDetails(error)}`,
+          email: probeEmail,
+          classification: 'failed'
+        };
+      }
+    }
+
+    return {
+      executedAt: Date.now(),
+      proxyUrl: options.proxyUrl,
+      egress,
+      managedEmail:
+        managedEmail ??
+        (options.managedEmailConfig?.provider === 'tempmail.lol'
+          ? {
+              provider: 'tempmail.lol',
+              success: tempmail.success,
+              message: tempmail.success
+                ? 'Tempmail provider 可用'
+                : `Tempmail provider 不可用: ${tempmail.message}`,
+              email: tempmailInboxEmail
+            }
+          : undefined),
+      mailbox,
+      tempmail,
+      registrationProbe,
+      aws: options.lastFailure
+        ? {
+            stage: options.lastFailure.stage,
+            message: options.lastFailure.message
+          }
+        : undefined
+    };
   } finally {
     await fetchContext?.close();
   }

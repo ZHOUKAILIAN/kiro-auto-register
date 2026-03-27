@@ -380,6 +380,8 @@ function setupIPCHandlers(): void {
       const diagnostics = await runRegisterDiagnostics({
         proxyUrl: normalizeOptionalProxyUrl(settings.proxyUrl),
         lastFailure: registerRuntime.getState().lastFailure,
+        registrationEmailMode: settings.registrationEmailMode,
+        customEmailAddress: settings.customEmailAddress,
         managedEmailConfig:
           settings.registrationEmailMode === 'tempmail'
             ? {

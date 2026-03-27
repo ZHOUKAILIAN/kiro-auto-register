@@ -2,37 +2,77 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  getTempmailAvailabilityLabel,
-  normalizeOptionalProxyUrl
+  getRegistrationProbeAvailabilityLabel,
+  getRegistrationProbeMessage
 } from './registerDiagnosticsUi.ts';
 
-test('normalizeOptionalProxyUrl trims empty input into undefined', () => {
-  assert.equal(normalizeOptionalProxyUrl(undefined), undefined);
-  assert.equal(normalizeOptionalProxyUrl(''), undefined);
-  assert.equal(normalizeOptionalProxyUrl('   '), undefined);
-  assert.equal(normalizeOptionalProxyUrl(' http://127.0.0.1:7890 '), 'http://127.0.0.1:7890');
-});
-
-test('getTempmailAvailabilityLabel distinguishes idle, success, and failure states', () => {
-  assert.equal(getTempmailAvailabilityLabel(undefined), '待检测');
+test('getRegistrationProbeAvailabilityLabel maps registration classifications to user-facing labels', () => {
   assert.equal(
-    getTempmailAvailabilityLabel({
-      executedAt: 1,
+    getRegistrationProbeAvailabilityLabel({
+      executedAt: Date.now(),
       tempmail: {
         success: true,
         message: 'Tempmail 邮箱创建成功'
+      },
+      registrationProbe: {
+        success: true,
+        stage: 'send-otp',
+        message: '已成功触发 OTP 发送',
+        classification: 'reachable'
       }
     }),
     '可用'
   );
+
   assert.equal(
-    getTempmailAvailabilityLabel({
-      executedAt: 1,
+    getRegistrationProbeAvailabilityLabel({
+      executedAt: Date.now(),
+      tempmail: {
+        success: true,
+        message: 'Tempmail 邮箱创建成功'
+      },
+      registrationProbe: {
+        success: false,
+        stage: 'send-otp',
+        message: 'Request was blocked by TES.',
+        classification: 'tes-blocked'
+      }
+    }),
+    'TES 拦截'
+  );
+
+  assert.equal(
+    getRegistrationProbeAvailabilityLabel({
+      executedAt: Date.now(),
+      tempmail: {
+        success: true,
+        message: 'Tempmail 邮箱创建成功'
+      },
+      registrationProbe: {
+        success: false,
+        stage: 'prepare-profile-workflow',
+        message: 'ECONNRESET',
+        classification: 'network-error'
+      }
+    }),
+    '网络失败'
+  );
+});
+
+test('getRegistrationProbeMessage explains when registration probe was not executed', () => {
+  assert.equal(
+    getRegistrationProbeMessage(undefined),
+    '点击“运行诊断”检查代理是否能真正推进到注册阶段'
+  );
+
+  assert.equal(
+    getRegistrationProbeMessage({
+      executedAt: Date.now(),
       tempmail: {
         success: false,
         message: 'Tempmail 邮箱创建失败'
       }
     }),
-    '不可用'
+    '当前诊断未进入注册探测，通常是因为邮箱或前置链路尚未准备好'
   );
 });

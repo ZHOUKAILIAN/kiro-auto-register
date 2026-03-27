@@ -6,7 +6,11 @@ import {
   buildRegisterOutcomeMessage,
   buildRegisterStartupMessages
 } from '../../shared/registerProgressUi.ts';
-import { getTempmailAvailabilityLabel } from '../../shared/registerDiagnosticsUi.ts';
+import {
+  getRegistrationProbeAvailabilityLabel,
+  getRegistrationProbeMessage,
+  getTempmailAvailabilityLabel
+} from '../../shared/registerDiagnosticsUi.ts';
 import type {
   AppSettings,
   RegisterDiagnostics,
@@ -207,7 +211,10 @@ function App() {
       const summaries = [
         diagnostics.tempmail.message,
         diagnostics.managedEmail?.message,
-        diagnostics.mailbox?.message
+        diagnostics.mailbox?.message,
+        diagnostics.registrationProbe
+          ? `注册探测(${diagnostics.registrationProbe.stage}): ${diagnostics.registrationProbe.message}`
+          : getRegistrationProbeMessage(diagnostics)
       ].filter(Boolean);
       setFlashMessage(`诊断完成：${summaries.join('；')}`);
     } catch (error) {
@@ -299,6 +306,10 @@ function App() {
   function renderDiagnosticsSummary(result: RegisterDiagnostics | undefined): string {
     if (!result) {
       return '还没有运行诊断';
+    }
+
+    if (result.registrationProbe) {
+      return `${getRegistrationProbeAvailabilityLabel(result)} · ${result.registrationProbe.stage}`;
     }
 
     const location = [result.egress?.city, result.egress?.region, result.egress?.country]
@@ -610,7 +621,7 @@ function App() {
             <div className="panel-header compact-header">
               <div>
                 <p className="panel-title">链路诊断</p>
-                <h2>出口、邮箱与最近阻塞</h2>
+                <h2>出口、邮箱与注册探测</h2>
               </div>
               <span className="status-chip">{renderDiagnosticsSummary(diagnostics)}</span>
             </div>
@@ -633,6 +644,15 @@ function App() {
                 <span className="diagnostic-label">Tempmail</span>
                 <strong>{getTempmailAvailabilityLabel(diagnostics)}</strong>
                 <p>{diagnostics?.tempmail.message || '点击“运行诊断”检查邮箱创建能力'}</p>
+              </div>
+              <div className="diagnostic-item">
+                <span className="diagnostic-label">代理注册探测</span>
+                <strong>{getRegistrationProbeAvailabilityLabel(diagnostics)}</strong>
+                <p>
+                  {diagnostics?.registrationProbe
+                    ? `${diagnostics.registrationProbe.stage} · ${getRegistrationProbeMessage(diagnostics)}`
+                    : getRegistrationProbeMessage(diagnostics)}
+                </p>
               </div>
               {settings.registrationEmailMode === 'tempmail' &&
               settings.managedEmailProvider === 'moemail-api' ? (
